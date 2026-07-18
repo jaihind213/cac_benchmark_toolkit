@@ -1,0 +1,155 @@
+# config/schema.yaml
+# Standard schema for NYC taxi trip data after normalisation.
+# value_map keys are lowercase — code lowercases input before lookup.
+
+standard_columns:
+  - name: pickup_datetime
+    dtype: TIMESTAMP
+    required: true
+
+  - name: dropoff_datetime
+    dtype: TIMESTAMP
+    required: true
+
+  - name: VendorID
+    dtype: STRING
+    required: true
+
+  - name: passenger_count
+    dtype: INT64
+    required: false
+
+  - name: trip_distance
+    dtype: FLOAT64
+    required: false
+
+  - name: RatecodeID
+    dtype: INT64
+    required: false
+    value_map:
+      '1': 1
+      '2': 2
+      '3': 3
+      '4': 4
+      '5': 5
+      '6': 6
+      'standard rate': 1
+      'jfk': 2
+      'newark': 3
+      'nassau or westchester': 4
+      'negotiated fare': 5
+      'group ride': 6
+
+  - name: store_and_fwd_flag
+    dtype: STRING
+    required: false
+
+  - name: PULocationID
+    dtype: INT64
+    required: false
+
+  - name: DOLocationID
+    dtype: INT64
+    required: false
+
+  - name: payment_type
+    dtype: INT64
+    required: false
+    value_map:
+      '1': 1
+      '2': 2
+      '3': 3
+      '4': 4
+      '5': 5
+      '6': 6
+      'credit card': 1
+      'cre': 1
+      'crd': 1
+      'cash': 2
+      'cas': 2
+      'no charge': 3
+      'no ': 3
+      'noc': 3
+      'dispute': 4
+      'dis': 4
+      'unknown': 5
+      'unk': 5
+      'voided trip': 6
+      'voided': 6
+
+  - name: fare_amount
+    dtype: FLOAT64
+    required: false
+
+  - name: extra
+    dtype: FLOAT64
+    required: false
+
+  - name: mta_tax
+    dtype: FLOAT64
+    required: false
+
+  - name: tip_amount
+    dtype: FLOAT64
+    required: false
+
+  - name: tolls_amount
+    dtype: FLOAT64
+    required: false
+
+  - name: improvement_surcharge
+    dtype: FLOAT64
+    required: false
+
+  - name: total_amount
+    dtype: FLOAT64
+    required: false
+
+  - name: congestion_surcharge
+    dtype: FLOAT64
+    required: false
+
+  - name: airport_fee
+    dtype: FLOAT64
+    required: false
+
+
+schema_mappings:
+
+  - name: schema_2009
+    detect_col: Trip_Pickup_DateTime
+    rename:
+      Trip_Pickup_DateTime:  pickup_datetime
+      Trip_Dropoff_DateTime: dropoff_datetime
+      Passenger_Count:       passenger_count
+      Trip_Distance:         trip_distance
+      Payment_Type:          payment_type
+      Fare_Amt:              fare_amount
+      Tip_Amt:               tip_amount
+      Tolls_Amt:             tolls_amount
+      Total_Amt:             total_amount
+      Rate_Code:             RatecodeID
+      vendor_name:           VendorID
+      surcharge:             extra
+
+  - name: schema_2010
+    detect_col: vendor_id
+    rename:
+      vendor_id:             VendorID
+      rate_code:             RatecodeID
+
+  - name: schema_yellow_tpep
+    detect_col: tpep_pickup_datetime
+    rename:
+      tpep_pickup_datetime:  pickup_datetime
+      tpep_dropoff_datetime: dropoff_datetime
+
+  - name: schema_green_lpep
+    detect_col: lpep_pickup_datetime
+    rename:
+      lpep_pickup_datetime:  pickup_datetime
+      lpep_dropoff_datetime: dropoff_datetime
+
+  - name: schema_2011_plus
+    detect_col: VendorID
+    rename: {}

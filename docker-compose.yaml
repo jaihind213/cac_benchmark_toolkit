@@ -1,0 +1,16 @@
+#docker network create test
+version: "2"
+services:
+  postgres:
+    image: hbontempo/postgres-hll:15-alpine3.17-latest
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - '5433:5432'
+    volumes:
+      - test_db_data:/var/lib/postgresql/data
+volumes:
+  test_db_data:
+    driver: local

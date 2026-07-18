@@ -1,0 +1,130 @@
+# config/convolutions_year.yaml
+# Defines bitmap convolutions per entity.
+#
+# All convolutions partitioned by [year, month, day]
+# Output: data/convolutions/entities/<entity>/yyyy/mm/dd/<name>.parquet
+#
+# Supported transforms:
+#   none         — use column value as-is
+#   round        — standard rounding: 1.59 → 2
+#   extract_date — TIMESTAMP → DATE
+#   extract_hour — TIMESTAMP → 0-23
+#   extract_year — TIMESTAMP → year integer
+
+convolutions:
+
+  - entity: trips
+    name: conv_cab_type
+    dim_cols:
+      - col: pickup_datetime
+        transform: extract_date
+        output_col: pickup_date
+      - col: cab_type
+        transform: none
+    output:
+      bitmap_col: entity_id
+      partitions:
+        - col: pickup_date
+          parts: [year, month, day]
+    # schema: pickup_date DATE, cab_type STRING, bitmap BLOB
+
+  - entity: trips
+    name: conv_pax_distance_date
+    dim_cols:
+      - col: pickup_datetime
+        transform: extract_date
+        output_col: pickup_date
+      - col: passenger_count
+        transform: none
+      - col: trip_distance
+        transform: round
+    output:
+      bitmap_col: entity_id
+      partitions:
+        - col: pickup_date
+          parts: [year, month, day]
+    # schema: pickup_date DATE, passenger_count INT, trip_distance INT, bitmap BLOB
+    # replaces: conv_passenger_count, conv_pax_year, conv_pax_year_distance
+    # answers Q2 (pax count), Q3 (pax × year), Q4 (pax × year × distance)
+
+  - entity: trips
+    name: conv_hour_pickup
+    dim_cols:
+      - col: pickup_datetime
+        transform: extract_date
+        output_col: pickup_date
+      - col: pickup_datetime
+        transform: extract_hour
+        output_col: pickup_hour
+    output:
+      bitmap_col: entity_id
+      partitions:
+        - col: pickup_date
+          parts: [year, month, day]
+    # schema: pickup_date DATE, pickup_hour INT, bitmap BLOB
+
+  - entity: trips
+    name: conv_pickup_zone
+    dim_cols:
+      - col: pickup_datetime
+        transform: extract_date
+        output_col: pickup_date
+      - col: pickup_datetime
+        transform: extract_hour
+        output_col: pickup_hour
+      - col: PULocationID
+        transform: none
+    output:
+      bitmap_col: entity_id
+      partitions:
+        - col: pickup_date
+          parts: [year, month, day]
+    # schema: pickup_date DATE, pickup_hour INT, PULocationID INT, bitmap BLOB
+
+  - entity: trips
+    name: conv_dropoff_zone
+    dim_cols:
+      - col: pickup_datetime
+        transform: extract_date
+        output_col: pickup_date
+      - col: pickup_datetime
+        transform: extract_hour
+        output_col: pickup_hour
+      - col: DOLocationID
+        transform: none
+    output:
+      bitmap_col: entity_id
+      partitions:
+        - col: pickup_date
+          parts: [year, month, day]
+    # schema: pickup_date DATE, pickup_hour INT, DOLocationID INT, bitmap BLOB
+
+  - entity: trips
+    name: conv_payment_type
+    dim_cols:
+      - col: pickup_datetime
+        transform: extract_date
+        output_col: pickup_date
+      - col: payment_type
+        transform: none
+    output:
+      bitmap_col: entity_id
+      partitions:
+        - col: pickup_date
+          parts: [year, month, day]
+    # schema: pickup_date DATE, payment_type INT, bitmap BLOB
+
+  - entity: trips
+    name: conv_rate_code
+    dim_cols:
+      - col: pickup_datetime
+        transform: extract_date
+        output_col: pickup_date
+      - col: RatecodeID
+        transform: none
+    output:
+      bitmap_col: entity_id
+      partitions:
+        - col: pickup_date
+          parts: [year, month, day]
+    # schema: pickup_date DATE, RatecodeID INT, bitmap BLOB
