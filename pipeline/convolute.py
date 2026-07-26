@@ -1,9 +1,9 @@
 """
 pipeline/convolute.py
 ---------------------
-Builds bitmap convolutions from enriched parquet files.
+Builds bitmap convolutions from clean parquet files.
 
-Reads from:  data/enriched/entities/<entity>/
+Reads from:  data/clean/entities/<entity>/
 Writes to:   data/convolutions/entities/<entity>/yyyy/mm/dd/<name>.parquet
              (partition path driven by output.partitions spec)
 
@@ -11,9 +11,16 @@ Schema of each output parquet:
   <dim output_cols...>   e.g. pickup_date DATE, cab_type STRING
   bitmap                 BLOB — roaring bitmap of entity_ids
 
+Each convolution spec in convolutions.yaml supports:
+  enabled: true|false    optional, default true — skip building when false
+  dim_cols               list of {col, transform, output_col}
+  output.partitions      folder partition spec, e.g. [year, month, day]
+
 Usage:
     python -m pipeline.convolute --entity trips
     python -m pipeline.convolute --entity trips --years 2009-2015
+    python -m pipeline.convolute --entity trips --only conv_cab_type conv_pickup_zone
+    python -m pipeline.convolute --entity trips --row-group-size 500000
 """
 
 import argparse
@@ -235,12 +242,17 @@ def convolute_file(path: Path, conv_root: Path, conv_specs: list[dict],
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def convolute(entity: str, convolutions_yaml: str, data_dir: str = "./data",
-              years: list[int] = None, row_group_size: int = 100_000):
+              years: list[int] = None, row_group_size: int = 100_000,
+              only: list = None):
 
     with open(convolutions_yaml) as f:
         conv_specs = yaml.safe_load(f)["convolutions"]
 
-    entity_specs = [c for c in conv_specs if c.get("entity", entity) == entity]
+    only_set     = set(only) if only else None
+    entity_specs = [c for c in conv_specs
+                    if c.get("entity", entity) == entity
+                    and c.get("enabled", True)
+                    and (only_set is None or c["name"] in only_set)]
     files        = paths_for_entity(data_dir + "/clean", entity, years)
     conv_root    = entity_dir(data_dir + "/convolutions", entity)
 
@@ -263,6 +275,8 @@ def main():
     parser.add_argument("--data-dir",        dest="data_dir", default="./data")
     parser.add_argument("--row-group-size",  dest="row_group_size", type=int, default=100_000,
                         help="Parquet row group size (default: 100000)")
+    parser.add_argument("--only",            nargs="+", default=None,
+                        help="Only build these convolutions by name, e.g. --only conv_cab_type")
     args = parser.parse_args()
     years = parse_years(args.years) if args.years else None
 
@@ -272,6 +286,7 @@ def main():
         data_dir=args.data_dir,
         years=years,
         row_group_size=args.row_group_size,
+        only=args.only,
     )
 
 

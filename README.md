@@ -40,7 +40,7 @@ benchmark    → results/
 pip install -e .
 
 # set Postgres DSN
-export PG_DSN="postgresql://user:pass@host:5432/cac"
+export PG_DSN="postgresql://postgres:postgres@localhost:5433/cac"
 ```
 
 ## Run Pipeline
@@ -53,7 +53,7 @@ python -m pipeline.download --entity trips --years 2009-2015 --taxi-types yellow
 python -m pipeline.extract_id --entity trips --years 2009-2015
 
 # 3. Enrich (assign integer entity_id via Postgres)
-python -m pipeline.enrich --entity trips --pg-dsn "$PG_DSN" --years 2009-2015 --workers 4
+python -m pipeline.enrich --entity trips --pg-dsn "$PG_DSN" --years 2009-2015
 
 # 4. Clean (normalise schema + filter invalid rows)
 python -m pipeline.clean --entity trips --years 2009-2015

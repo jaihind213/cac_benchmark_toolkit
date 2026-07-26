@@ -1,14 +1,34 @@
 """
 benchmark/run.py
 ----------------
-Runs CAC benchmark queries against convolution parquets.
+Runs CAC benchmark queries against convolution parquets and reports timings,
+speedups vs the published benchmark, and validation against clean source data.
 
-Convolutions loaded from: data/convolutions/entities/<entity>/yyyy/mm/
+Convolutions loaded from: data/convolutions/entities/<entity>/yyyy/mm/dd/
+Facts loaded from:        data/facts/entities/<entity>/
 SQL validation runs on:   data/clean/entities/<entity>/
+
+Loading strategy:
+  --try-to-cache   load each convolution into a DuckDB TABLE (in RAM) and
+                   precompute rb_count for every bitmap into a Python cache,
+                   so rb_count becomes a dict lookup instead of a deserialize.
+  (default)        create VIEWs that read parquet from disk on each query.
+  Only convolutions/facts referenced by the queries being run are loaded.
+
+Query selection:
+  --queries Q1 Q3  run only these query IDs (overrides the spec 'enabled' flag).
+  (default)        run every query with 'enabled: true' in the spec.
+
+Bitmap UDFs registered into DuckDB: rb_and, rb_or, rb_count, rb_to_array,
+rb_chunk, rb_contains, rb_union_list. rb_count is served from a precomputed
+count cache when --try-to-cache is set.
+
+Results CSV: results/<B>_cac_times_<threads>threads_<memory>_<cache>.csv
 
 Usage:
     python -m benchmark.run --benchmark B1 --entity trips
-    python -m benchmark.run --benchmark B1 --entity trips --clean ./data
+    python -m benchmark.run --benchmark B1 --entity trips --duckdb-threads 8 --memory 12GB
+    python -m benchmark.run --benchmark B2 --entity trips --queries Q4 Q5 --try-to-cache
 """
 
 import argparse
@@ -151,9 +171,11 @@ def load_convolutions(con: duckdb.DuckDBPyConnection, entity: str,
                       try_to_cache: bool = True,
                       only_tables: set = None) -> list[str]:
     """
-    Load all convolution parquets and fact table for entity into DuckDB.
-    - If convolution fits in available memory → load as TABLE (faster queries)
-    - Otherwise → create as VIEW (reads from disk on query)
+    Load convolution parquets and fact table for entity into DuckDB.
+    - If try_to_cache and it fits in available memory → load as TABLE and
+      precompute rb_count for every bitmap into the count cache.
+    - Otherwise → create as VIEW (reads from disk on query).
+    only_tables: None → load all; empty set → load none; set → load those.
     """
     conv_root = Path(data_dir) / "convolutions" / "entities" / entity
     if not conv_root.exists():
@@ -231,6 +253,7 @@ def load_convolutions(con: duckdb.DuckDBPyConnection, entity: str,
         print(f"\nMemory: {total_loaded_mb:.1f}MB loaded into RAM, "
               f"{avail_mb:.0f}MB available")
     print(f"Loaded {len(tables_loaded)} tables/views")
+    return tables_loaded
 
 
 # ── Validation ────────────────────────────────────────────────────────────────
@@ -517,11 +540,11 @@ def main():
                         help="DuckDB spill-to-disk directory (default: /tmp/duckdb_spill)")
     parser.add_argument("--try-to-cache",    dest="try_to_cache", action="store_true",
                         default=False,
-                        help="Try to load convolutions into memory as TABLE (default: False)")
+                        help="Load convolutions into memory as TABLE + precompute counts (default: False)")
     parser.add_argument("--no-cache",        dest="try_to_cache", action="store_false",
                         help="Force VIEW mode — read convolutions from disk")
     parser.add_argument("--queries",         nargs="+", default=None,
-                        help="Only run specific query IDs, e.g. --queries Q1 Q3 (default: all enabled)")
+                        help="Only run specific query IDs, e.g. --queries Q1 Q3 (overrides 'enabled')")
     args = parser.parse_args()
 
     for bm_id in args.benchmark:

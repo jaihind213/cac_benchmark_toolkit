@@ -64,7 +64,7 @@ convolutions:
     # schema: pickup_date DATE, pickup_hour INT, bitmap BLOB
 
   - entity: trips
-    name: conv_pickup_zone
+    name: conv_pickup_zone_old
     dim_cols:
       - col: pickup_datetime
         transform: extract_date
@@ -72,6 +72,20 @@ convolutions:
       - col: pickup_datetime
         transform: extract_hour
         output_col: pickup_hour
+      - col: PULocationID
+        transform: none
+    output:
+      bitmap_col: entity_id
+      partitions:
+        - col: pickup_date
+          parts: [year, month, day]
+
+  - entity: trips
+    name: conv_pickup_zone
+    dim_cols:
+      - col: pickup_datetime
+        transform: extract_date
+        output_col: pickup_date
       - col: PULocationID
         transform: none
     output:
