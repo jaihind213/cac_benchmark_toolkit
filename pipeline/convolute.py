@@ -266,15 +266,15 @@ def convolute(entity: str, convolutions_yaml: str, data_dir: str = "./data",
 
     print(f"\nConvolutions → {conv_root}")
 
-
+ONE_MILLION = 1024*1024
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--entity",          required=True)
     parser.add_argument("--convolutions",    default="config/convolutions.yaml")
     parser.add_argument("--years",           type=str, nargs="+", default=None)
     parser.add_argument("--data-dir",        dest="data_dir", default="./data")
-    parser.add_argument("--row-group-size",  dest="row_group_size", type=int, default=100_000,
-                        help="Parquet row group size (default: 100000)")
+    parser.add_argument("--row-group-size",  dest="row_group_size", type=int, default=ONE_MILLION,
+                        help="Parquet row group size (default: 1000000)")
     parser.add_argument("--only",            nargs="+", default=None,
                         help="Only build these convolutions by name, e.g. --only conv_cab_type")
     args = parser.parse_args()

@@ -36,10 +36,10 @@ def load_entity_config(entities_yaml: str, entity_name: str) -> dict:
             return cfg
     raise ValueError(f"Entity '{entity_name}' not found in {entities_yaml}")
 
-
+ONE_MILLION = 1024*1024
 def write_fact_file(df: pd.DataFrame, fact_cols: list[dict],
                     primary_ts: dict, out_root: Path, filename: str,
-                    row_group_size: int = 1_000_000) -> int:
+                    row_group_size: int = ONE_MILLION) -> int:
     """Partition by primary_timestamp; write only entity_id + fact_cols to parquet."""
     fact_df = df.copy()
 
@@ -156,7 +156,7 @@ def main():
     parser.add_argument("--data-dir", dest="data_dir", default="./data")
     parser.add_argument("--input",  dest="enriched_subdir", default="clean",
                         help="Subdir under data-dir to read from (default: clean)")
-    parser.add_argument("--row-group-size", dest="row_group_size", type=int, default=1_000_000,
+    parser.add_argument("--row-group-size", dest="row_group_size", type=int, default=ONE_MILLION,
                         help="Parquet row group size (default: 1000000)")
     args = parser.parse_args()
     years = parse_years(args.years) if args.years else None

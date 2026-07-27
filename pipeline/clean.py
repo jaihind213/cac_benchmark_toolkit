@@ -189,9 +189,9 @@ def split_clean_dirty(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, dic
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
-
+ONE_MILLION = 1024*1024
 def clean(entity: str, schema_yaml: str = "config/schema.yaml",
-          data_dir: str = "./data", years: list[int] = None):
+          data_dir: str = "./data", years: list[int] = None, row_group_size= ONE_MILLION):
     schema     = load_schema(schema_yaml)
     files      = paths_for_entity(data_dir + "/enriched", entity, years)
     clean_root = entity_dir(data_dir + "/clean",  entity)
@@ -221,7 +221,7 @@ def clean(entity: str, schema_yaml: str = "config/schema.yaml",
             df = detect_and_rename(df, schema)
             df = cast_and_standardise(df, schema)
             clean_df, dirty_df, stats = split_clean_dirty(df)
-            pq.write_table(pa.Table.from_pandas(clean_df), out_path,   compression="zstd")
+            pq.write_table(pa.Table.from_pandas(clean_df), out_path,   compression="zstd", row_group_size=row_group_size)
             pq.write_table(pa.Table.from_pandas(dirty_df), dirty_path, compression="zstd")
             t.rows = stats["rows_clean"]
 
@@ -275,10 +275,12 @@ def main():
     parser.add_argument("--schema",   default="config/schema.yaml")
     parser.add_argument("--years",    type=str, nargs="+", default=None)
     parser.add_argument("--data-dir", dest="data_dir", default="./data")
+    parser.add_argument("--row-group-size", dest="row_group_size", type=int, default=ONE_MILLION,
+                        help="Parquet row group size (default: 1000000)")
     args = parser.parse_args()
     years = parse_years(args.years) if args.years else None
     clean(entity=args.entity, schema_yaml=args.schema,
-          data_dir=args.data_dir, years=years)
+          data_dir=args.data_dir, years=years, row_group_size=args.row_group_size)
 
 
 if __name__ == "__main__":

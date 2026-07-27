@@ -40,7 +40,7 @@ benchmark    → results/
 pip install -e .
 
 # set Postgres DSN
-export PG_DSN="postgresql://postgres:postgres@localhost:5433/cac"
+export PG_DSN="postgresql://postgres:postgres@localhost:5433/postgres"
 ```
 
 ## Run Pipeline
@@ -59,7 +59,7 @@ python -m pipeline.enrich --entity trips --pg-dsn "$PG_DSN" --years 2009-2015
 python -m pipeline.clean --entity trips --years 2009-2015
 
 # 5. Create facts (slim fact table from clean data)
-python -m pipeline.create_facts --entity trips --years 2009-2015
+python -m pipeline.create_facts --entity trips --row-group-size 1048576 --years 2009-2015
 
 # 6. Build convolutions (bitmap per dimension value from clean data)
 python -m pipeline.convolute --entity trips --years 2009-2015

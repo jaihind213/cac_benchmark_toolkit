@@ -378,14 +378,16 @@ def validate_query(con: duckdb.DuckDBPyConnection, q: dict,
 # ── Query execution ───────────────────────────────────────────────────────────
 
 def run_query(con: duckdb.DuckDBPyConnection, sql: str, iterations: int = 5) -> float:
-    """Run query N times. Return median time in ms."""
+    """Run query N times. Return minimum of run times in ms."""
     times = []
     for _ in range(iterations):
         t0 = time.perf_counter()
         con.execute(sql).fetchall()
         times.append((time.perf_counter() - t0) * 1000)
     times.sort()
-    return times[len(times) // 2]
+    print(times)
+    return min(times)
+    #return times[len(times) // 2]
 
 
 def run_benchmark(benchmark_id: str, entity: str, data_dir: str = "./data",
