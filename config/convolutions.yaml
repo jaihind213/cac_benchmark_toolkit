@@ -25,7 +25,7 @@ convolutions:
       bitmap_col: entity_id
       partitions:
         - col: pickup_date
-          parts: [year, month, day]
+          parts: [year]
     # schema: pickup_date DATE, cab_type STRING, bitmap BLOB
 
   - entity: trips
@@ -42,7 +42,7 @@ convolutions:
       bitmap_col: entity_id
       partitions:
         - col: pickup_date
-          parts: [year, month, day]
+          parts: [year]
     # schema: pickup_date DATE, passenger_count INT, trip_distance INT, bitmap BLOB
     # replaces: conv_passenger_count, conv_pax_year, conv_pax_year_distance
     # answers Q2 (pax count), Q3 (pax × year), Q4 (pax × year × distance)
@@ -60,7 +60,7 @@ convolutions:
       bitmap_col: entity_id
       partitions:
         - col: pickup_date
-          parts: [year, month, day]
+          parts: [year]
     # schema: pickup_date DATE, pickup_hour INT, bitmap BLOB
 
   - entity: trips
@@ -75,7 +75,7 @@ convolutions:
       bitmap_col: entity_id
       partitions:
         - col: pickup_date
-          parts: [year, month, day]
+          parts: [year]
     # schema: pickup_date DATE, pickup_hour INT, PULocationID INT, bitmap BLOB
 
   - entity: trips
@@ -93,7 +93,7 @@ convolutions:
       bitmap_col: entity_id
       partitions:
         - col: pickup_date
-          parts: [year, month, day]
+          parts: [year]
     # schema: pickup_date DATE, pickup_hour INT, DOLocationID INT, bitmap BLOB
 
   - entity: trips
@@ -108,7 +108,7 @@ convolutions:
       bitmap_col: entity_id
       partitions:
         - col: pickup_date
-          parts: [year, month, day]
+          parts: [year]
     # schema: pickup_date DATE, payment_type INT, bitmap BLOB
 
   - entity: trips
@@ -123,5 +123,5 @@ convolutions:
       bitmap_col: entity_id
       partitions:
         - col: pickup_date
-          parts: [year, month, day]
+          parts: [year]
     # schema: pickup_date DATE, RatecodeID INT, bitmap BLOB
