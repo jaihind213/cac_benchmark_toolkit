@@ -1,8 +1,8 @@
 # config/convolutions_year.yaml
 # Defines bitmap convolutions per entity.
 #
-# All convolutions partitioned by [year]
-# Output: data/convolutions/entities/<entity>/yyyy/<name>.parquet
+# All convolutions partitioned by [year, month, day]
+# Output: data/convolutions/entities/<entity>/yyyy/mm/dd/<name>.parquet
 #
 # Supported transforms:
 #   none         — use column value as-is
@@ -10,13 +10,6 @@
 #   extract_date — TIMESTAMP → DATE
 #   extract_hour — TIMESTAMP → 0-23
 #   extract_year — TIMESTAMP → year integer
-#
-# Output flags (optional, default false):
-#   add_cardinality_col — adds cardinality BIGINT = len(bitmap), precomputed.
-#                         Lets queries use SUM(cardinality) instead of
-#                         SUM(rb_count(bitmap)) — native, no UDF per row.
-#   add_hash_col        — adds bitmap_hash BIGINT = stable blake2b hash of the
-#                         bitmap bytes, usable as a cross-process cache key.
 
 convolutions:
 
@@ -30,12 +23,10 @@ convolutions:
         transform: none
     output:
       bitmap_col: entity_id
-      add_cardinality_col: true
-      add_hash_col: true
       partitions:
         - col: pickup_date
-          parts: [year]
-    # schema: pickup_date DATE, cab_type STRING, bitmap BLOB, cardinality BIGINT, bitmap_hash BIGINT
+          parts: [year, month, day]
+    # schema: pickup_date DATE, cab_type STRING, bitmap BLOB
 
   - entity: trips
     name: conv_pax_distance_date
@@ -49,12 +40,10 @@ convolutions:
         transform: round
     output:
       bitmap_col: entity_id
-      add_cardinality_col: true
-      add_hash_col: true
       partitions:
         - col: pickup_date
-          parts: [year]
-    # schema: pickup_date DATE, passenger_count INT, trip_distance INT, bitmap BLOB, cardinality BIGINT, bitmap_hash BIGINT
+          parts: [year, month, day]
+    # schema: pickup_date DATE, passenger_count INT, trip_distance INT, bitmap BLOB
     # replaces: conv_passenger_count, conv_pax_year, conv_pax_year_distance
     # answers Q2 (pax count), Q3 (pax × year), Q4 (pax × year × distance)
 
@@ -69,12 +58,10 @@ convolutions:
         output_col: pickup_hour
     output:
       bitmap_col: entity_id
-      add_cardinality_col: true
-      add_hash_col: true
       partitions:
         - col: pickup_date
-          parts: [year]
-    # schema: pickup_date DATE, pickup_hour INT, bitmap BLOB, cardinality BIGINT, bitmap_hash BIGINT
+          parts: [year, month, day]
+    # schema: pickup_date DATE, pickup_hour INT, bitmap BLOB
 
   - entity: trips
     name: conv_pickup_zone
@@ -82,16 +69,17 @@ convolutions:
       - col: pickup_datetime
         transform: extract_date
         output_col: pickup_date
+      - col: pickup_datetime
+        transform: extract_hour
+        output_col: pickup_hour
       - col: PULocationID
         transform: none
     output:
       bitmap_col: entity_id
-      add_cardinality_col: true
-      add_hash_col: true
       partitions:
         - col: pickup_date
-          parts: [year]
-    # schema: pickup_date DATE, PULocationID INT, bitmap BLOB, cardinality BIGINT, bitmap_hash BIGINT
+          parts: [year, month, day]
+    # schema: pickup_date DATE, pickup_hour INT, PULocationID INT, bitmap BLOB
 
   - entity: trips
     name: conv_dropoff_zone
@@ -106,12 +94,10 @@ convolutions:
         transform: none
     output:
       bitmap_col: entity_id
-      add_cardinality_col: true
-      add_hash_col: true
       partitions:
         - col: pickup_date
-          parts: [year]
-    # schema: pickup_date DATE, pickup_hour INT, DOLocationID INT, bitmap BLOB, cardinality BIGINT, bitmap_hash BIGINT
+          parts: [year, month, day]
+    # schema: pickup_date DATE, pickup_hour INT, DOLocationID INT, bitmap BLOB
 
   - entity: trips
     name: conv_payment_type
@@ -123,12 +109,10 @@ convolutions:
         transform: none
     output:
       bitmap_col: entity_id
-      add_cardinality_col: true
-      add_hash_col: true
       partitions:
         - col: pickup_date
-          parts: [year]
-    # schema: pickup_date DATE, payment_type INT, bitmap BLOB, cardinality BIGINT, bitmap_hash BIGINT
+          parts: [year, month, day]
+    # schema: pickup_date DATE, payment_type INT, bitmap BLOB
 
   - entity: trips
     name: conv_rate_code
@@ -140,9 +124,7 @@ convolutions:
         transform: none
     output:
       bitmap_col: entity_id
-      add_cardinality_col: true
-      add_hash_col: true
       partitions:
         - col: pickup_date
-          parts: [year]
-    # schema: pickup_date DATE, RatecodeID INT, bitmap BLOB, cardinality BIGINT, bitmap_hash BIGINT
+          parts: [year, month, day]
+    # schema: pickup_date DATE, RatecodeID INT, bitmap BLOB

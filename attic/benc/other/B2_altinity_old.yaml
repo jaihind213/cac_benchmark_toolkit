@@ -1,5 +1,5 @@
 # config/benchmarks/B2_altinity.yaml
-benchmark_id: HASH_B2
+benchmark_id: B2
 name: "Altinity — ClickHouse vs Redshift NYC Taxi Benchmark"
 url: "https://altinity.com/blog/clickhouse-and-redshift-face-off-again-in-nyc-taxi-rides-benchmark"
 published: "2020"
@@ -37,8 +37,7 @@ queries:
       SELECT passenger_count,
              AVG(total_amount) AS avg_total_amount
       FROM facts
-      WHERE pickup_datetime >= TIMESTAMP '2009-01-01 00:00:00'
-        AND pickup_datetime <  TIMESTAMP '2016-01-01 00:00:00'
+      WHERE pickup_datetime BETWEEN '2009-01-01' AND '2015-12-31'
       GROUP BY passenger_count
     nature: "Grouped aggregate — average fare per passenger count"
     cac_phase: "Phase 2 (facts direct)"
@@ -57,11 +56,11 @@ queries:
       ORDER BY passenger_count, DATE_PART('year', pickup_datetime)
     cac_sql: >
       SELECT passenger_count,
-             LEFT(pickup_date, 4) as year,
-             SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
+             YEAR(pickup_date::DATE) AS year,
+             rb_count(rb_union_list(list(bitmap))) AS cnt
       FROM conv_pax_distance_date
       WHERE pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
-      GROUP BY passenger_count, LEFT(pickup_date, 4)
+      GROUP BY passenger_count, YEAR(pickup_date::DATE)
       ORDER BY passenger_count, year
     nature: "Two-dimensional count — passenger count × year"
     cac_phase: "Phase 1"
@@ -81,12 +80,12 @@ queries:
       ORDER BY passenger_count, DATE_PART('year', pickup_datetime), ROUND(trip_distance)
     cac_sql: >
       SELECT passenger_count,
-             LEFT(pickup_date, 4) as year,
+             YEAR(pickup_date::DATE) AS year,
              trip_distance AS distance,
-             SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
+             rb_count(rb_union_list(list(bitmap))) AS cnt
       FROM conv_pax_distance_date
       WHERE pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
-      GROUP BY passenger_count, LEFT(pickup_date, 4), trip_distance
+      GROUP BY passenger_count, YEAR(pickup_date::DATE), trip_distance
       ORDER BY passenger_count, year, trip_distance
     nature: "Three-dimensional count with ranking"
     cac_phase: "Phase 1"
@@ -104,9 +103,9 @@ queries:
       ORDER BY c DESC
     cac_sql: >
       SELECT PULocationID,
-             SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
+             rb_count(rb_union_list(list(bitmap))) AS cnt
       FROM conv_pickup_zone
-      WHERE PULocationID IS NOT NULL
+      WHERE pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
       GROUP BY PULocationID
       ORDER BY cnt DESC
     nature: "Top pickup zones by trip count"
@@ -122,10 +121,10 @@ queries:
       SELECT COUNT(*) FROM trips
       WHERE PULocationID = 162
     cac_sql: >
-      SELECT SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
+      SELECT rb_count(rb_union_list(list(bitmap))) AS cnt
       FROM conv_pickup_zone
       WHERE pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
-        AND PULocationID = 162
+      AND PULocationID = 162
     nature: "Count trips from Midtown East (LocationID 162)"
     cac_phase: "Phase 1"
     benchmark_time_ms: 330

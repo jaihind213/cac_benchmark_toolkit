@@ -1,4 +1,4 @@
-benchmark_id: HASH_B1
+benchmark_id: B1
 name: "Mark Litwintschik — 1.1B NYC Taxi Rides using DuckDB"
 url: "https://tech.marksblogg.com/duckdb-1b-taxi-rides.html"
 published: "March 2024"
@@ -27,7 +27,7 @@ queries:
       SELECT cab_type, COUNT(*) FROM trips GROUP BY cab_type
     cac_sql: >
       SELECT cab_type,
-             SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
+             SUM(cardinality) AS cnt
       FROM conv_cab_type
       WHERE pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
       GROUP BY cab_type
@@ -46,7 +46,7 @@ queries:
       SELECT cab_type, COUNT(*) FROM trips GROUP BY cab_type
     cac_sql: >
       SELECT cab_type,
-             SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
+             SUM(cardinality) AS cnt
       FROM conv_cab_type
       WHERE pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
       GROUP BY cab_type
@@ -87,7 +87,7 @@ queries:
     cac_sql: >
       SELECT passenger_count,
              LEFT(pickup_date, 4) as year,
-             SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
+             SUM(cardinality) AS cnt
       FROM conv_pax_distance_date
       WHERE pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
       GROUP BY passenger_count, LEFT(pickup_date, 4) 
@@ -112,7 +112,7 @@ queries:
       SELECT passenger_count,
              LEFT(pickup_date, 4) AS year,
              trip_distance AS distance,
-             SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
+             SUM(cardinality) AS cnt
       FROM conv_pax_distance_date
       WHERE pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
       GROUP BY passenger_count, LEFT(pickup_date, 4), trip_distance

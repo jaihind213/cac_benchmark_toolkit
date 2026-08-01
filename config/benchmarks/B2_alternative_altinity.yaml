@@ -1,5 +1,5 @@
 # config/benchmarks/B2_altinity.yaml
-benchmark_id: HASH_B2
+benchmark_id: B2
 name: "Altinity — ClickHouse vs Redshift NYC Taxi Benchmark"
 url: "https://altinity.com/blog/clickhouse-and-redshift-face-off-again-in-nyc-taxi-rides-benchmark"
 published: "2020"
@@ -58,7 +58,7 @@ queries:
     cac_sql: >
       SELECT passenger_count,
              LEFT(pickup_date, 4) as year,
-             SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
+             SUM(cardinality) AS cnt
       FROM conv_pax_distance_date
       WHERE pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
       GROUP BY passenger_count, LEFT(pickup_date, 4)
@@ -83,7 +83,7 @@ queries:
       SELECT passenger_count,
              LEFT(pickup_date, 4) as year,
              trip_distance AS distance,
-             SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
+             SUM(cardinality) AS cnt
       FROM conv_pax_distance_date
       WHERE pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
       GROUP BY passenger_count, LEFT(pickup_date, 4), trip_distance
@@ -104,7 +104,7 @@ queries:
       ORDER BY c DESC
     cac_sql: >
       SELECT PULocationID,
-             SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
+             SUM(cardinality) AS cnt
       FROM conv_pickup_zone
       WHERE PULocationID IS NOT NULL
       GROUP BY PULocationID
@@ -122,7 +122,7 @@ queries:
       SELECT COUNT(*) FROM trips
       WHERE PULocationID = 162
     cac_sql: >
-      SELECT SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
+      SELECT SUM(cardinality) AS cnt
       FROM conv_pickup_zone
       WHERE pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
         AND PULocationID = 162

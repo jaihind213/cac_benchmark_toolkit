@@ -58,18 +58,32 @@ python -m pipeline.enrich --entity trips --pg-dsn "$PG_DSN" --years 2009-2015
 # 4. Clean (normalise schema + filter invalid rows)
 python -m pipeline.clean --entity trips --years 2009-2015
 
-# 5. Create facts (slim fact table from clean data)
-python -m pipeline.create_facts --entity trips --row-group-size 1048576 --years 2009-2015
+# 5. Create facts (slim fact table from clean data) - you can run the below in parallel :)
+python -m pipeline.create_facts --entity trips --row-group-size 500000 --years 2009-2009
+python -m pipeline.create_facts --entity trips --row-group-size 500000 --years 2010-2010
+python -m pipeline.create_facts --entity trips --row-group-size 500000 --years 2011-2011
+python -m pipeline.create_facts --entity trips --row-group-size 500000 --years 2012-2012
+python -m pipeline.create_facts --entity trips --row-group-size 500000 --years 2013-2013
+python -m pipeline.create_facts --entity trips --row-group-size 500000 --years 2014-2014
+python -m pipeline.create_facts --entity trips --row-group-size 500000 --years 2015-2015
+
+# or # this is slower
+python -m pipeline.create_facts --entity trips --row-group-size 500000 --years 2009-2015
 
 # 6. Build convolutions (bitmap per dimension value from clean data)
-python -m pipeline.convolute --entity trips --years 2009-2015
+python -m pipeline.convolute --entity trips --years 2009-2015 --row-group-size 100000
 ```
 
 ## Run Benchmark
 
 ```bash
-# Run B1 queries against CAC convolutions
-python -m benchmark.run --benchmark B1 --entity trips --memory 8GB --duckdb-threads 4
+# Run B1/B2 queries against CAC convolutions.
+# There are variants of the benchmark queries, so you can run them all and compare results.
+python3.11 -m benchmark.run_lookup_bm_hash --benchmark B1_litwintschik --entity trips --memory 5GB --duckdb-threads 8 --iterations 10 --try-to-cache
+python3.11 -m benchmark.run_lookup_bm_hash --benchmark B2_altinity --entity trips --memory 5GB --duckdb-threads 8 --iterations 10 --try-to-cache
+python3.11 -m benchmark.run_lookup_bm_hash --benchmark B1_alternative_litwintschik --entity trips --memory 5GB --duckdb-threads 8 --iterations 10 --try-to-cache 
+python3.11 -m benchmark.run_lookup_bm_hash --benchmark B2_alternative_altinity --entity trips --memory 5GB --duckdb-threads 8 --iterations 10 --try-to-cache 
+ 
 
 # Consolidate with benchmark source times + VM costs
 python -m benchmark.consolidate --benchmark B1 --cac-instance r6i.xlarge

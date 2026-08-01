@@ -36,6 +36,17 @@ from pyroaring import BitMap
 from pipeline.timer import TimerLog, parse_years, entity_dir, paths_for_entity
 
 
+def stable_hash(b: bytes) -> int:
+    """Deterministic 64-bit hash of bitmap bytes (stable across processes).
+    Uses blake2b so precomputed hashes match at query time regardless of
+    PYTHONHASHSEED. Returned as a signed 64-bit int to fit DuckDB BIGINT."""
+    import hashlib
+    h = hashlib.blake2b(b, digest_size=8).digest()
+    val = int.from_bytes(h, "big", signed=False)
+    # map to signed 64-bit range for DuckDB BIGINT
+    return val - (1 << 64) if val >= (1 << 63) else val
+
+
 # ── Transforms ────────────────────────────────────────────────────────────────
 
 TRANSFORM_REGISTRY = {
@@ -94,6 +105,8 @@ def build_convolution(df: pd.DataFrame, conv: dict) -> dict[str, pd.DataFrame] |
     output_cfg = conv["output"]
     bitmap_col = output_cfg["bitmap_col"]
     partitions = output_cfg.get("partitions", [])
+    add_hash   = output_cfg.get("add_hash_col", False)
+    add_card   = output_cfg.get("add_cardinality_col", False)
 
     # check required source columns exist
     missing = [d["col"] for d in dim_cols if d["col"] not in df.columns]
@@ -142,17 +155,26 @@ def build_convolution(df: pd.DataFrame, conv: dict) -> dict[str, pd.DataFrame] |
 
             if group_cols:
                 for keys, grp in part_grp.groupby(group_cols, sort=True):
-                    bm  = BitMap(grp[bitmap_col].dropna().astype(int).tolist())
+                    bm       = BitMap(grp[bitmap_col].dropna().astype(int).tolist())
+                    bm_bytes = bytes(bm.serialize())
                     row = dict(zip(group_cols, keys if isinstance(keys, tuple) else (keys,)))
                     row[partition_col] = part_val
-                    row["bitmap"] = bytes(bm.serialize())
+                    row["bitmap"] = bm_bytes
+                    if add_card: row["cardinality"] = len(bm)
+                    if add_hash: row["bitmap_hash"] = stable_hash(bm_bytes)
                     rows.append(row)
             else:
-                bm  = BitMap(part_grp[bitmap_col].dropna().astype(int).tolist())
-                rows.append({partition_col: part_val, "bitmap": bytes(bm.serialize())})
+                bm       = BitMap(part_grp[bitmap_col].dropna().astype(int).tolist())
+                bm_bytes = bytes(bm.serialize())
+                row = {partition_col: part_val, "bitmap": bm_bytes}
+                if add_card: row["cardinality"] = len(bm)
+                if add_hash: row["bitmap_hash"] = stable_hash(bm_bytes)
+                rows.append(row)
 
             if rows:
-                out_cols = [partition_col] + group_cols + ["bitmap"]
+                extra    = (["cardinality"] if add_card else []) + \
+                           (["bitmap_hash"] if add_hash else [])
+                out_cols = [partition_col] + group_cols + ["bitmap"] + extra
                 new_df   = pd.DataFrame(rows)[out_cols]
                 # accumulate multiple days that share the same partition path
                 if part_path in results:
@@ -165,9 +187,12 @@ def build_convolution(df: pd.DataFrame, conv: dict) -> dict[str, pd.DataFrame] |
         # no partitioning — one output file
         rows = []
         for keys, grp in work.groupby(col_names, sort=True):
-            bm  = BitMap(grp[bitmap_col].dropna().astype(int).tolist())
+            bm       = BitMap(grp[bitmap_col].dropna().astype(int).tolist())
+            bm_bytes = bytes(bm.serialize())
             row = dict(zip(col_names, keys if isinstance(keys, tuple) else (keys,)))
-            row["bitmap"] = bytes(bm.serialize())
+            row["bitmap"] = bm_bytes
+            if add_card: row["cardinality"] = len(bm)
+            if add_hash: row["bitmap_hash"] = stable_hash(bm_bytes)
             rows.append(row)
         if rows:
             results[""] = pd.DataFrame(rows)
@@ -198,8 +223,9 @@ def convolute_file(path: Path, conv_root: Path, conv_specs: list[dict],
             if "pickup_date" in result_df.columns:
                 result_df["pickup_date"] = result_df["pickup_date"].astype(str)
 
-            # sort by all dim cols for better compression + row group pruning
-            dim_cols_sorted = [c for c in result_df.columns if c != "bitmap"]
+            # sort by dim cols (exclude bitmap + precomputed cols) for compression
+            precomputed = {"bitmap", "cardinality", "bitmap_hash"}
+            dim_cols_sorted = [c for c in result_df.columns if c not in precomputed]
             result_df = result_df.sort_values(dim_cols_sorted).reset_index(drop=True)
 
             # append if file exists (multiple source files may cover same partition)
@@ -207,16 +233,19 @@ def convolute_file(path: Path, conv_root: Path, conv_specs: list[dict],
                 existing = pd.read_parquet(out_file)
                 # cast both to same dtypes before concat to avoid type conflicts
                 for col in existing.columns:
-                    if col in result_df.columns and col != "bitmap":
+                    if col in result_df.columns and col not in precomputed:
                         try:
                             result_df[col] = result_df[col].astype(existing[col].dtype)
                         except Exception:
                             existing[col] = existing[col].astype(str)
                             result_df[col] = result_df[col].astype(str)
                 result_df = pd.concat([existing, result_df], ignore_index=True)
-                # re-aggregate bitmaps for same dim key combinations
-                # convert object cols to string for stable groupby
-                dim_cols = [c for c in result_df.columns if c != "bitmap"]
+
+                # re-aggregate bitmaps for same dim key combinations.
+                # group ONLY by real dim cols (never by bitmap/cardinality/hash)
+                dim_cols = [c for c in result_df.columns if c not in precomputed]
+                has_card = "cardinality" in result_df.columns
+                has_hash = "bitmap_hash" in result_df.columns
                 group_df = result_df.copy()
                 for col in dim_cols:
                     if group_df[col].dtype == object:
@@ -226,8 +255,11 @@ def convolute_file(path: Path, conv_root: Path, conv_specs: list[dict],
                     combined = BitMap()
                     for bm_bytes in result_df.loc[grp.index, "bitmap"]:
                         combined |= BitMap.deserialize(bm_bytes)
+                    cb_bytes = bytes(combined.serialize())
                     row = dict(zip(dim_cols, keys if isinstance(keys, tuple) else (keys,)))
-                    row["bitmap"] = bytes(combined.serialize())
+                    row["bitmap"] = cb_bytes
+                    if has_card: row["cardinality"] = len(combined)
+                    if has_hash: row["bitmap_hash"] = stable_hash(cb_bytes)
                     rows.append(row)
                 result_df = pd.DataFrame(rows)
 
@@ -266,15 +298,15 @@ def convolute(entity: str, convolutions_yaml: str, data_dir: str = "./data",
 
     print(f"\nConvolutions → {conv_root}")
 
-ONE_MILLION = 1024*1024
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--entity",          required=True)
     parser.add_argument("--convolutions",    default="config/convolutions.yaml")
     parser.add_argument("--years",           type=str, nargs="+", default=None)
     parser.add_argument("--data-dir",        dest="data_dir", default="./data")
-    parser.add_argument("--row-group-size",  dest="row_group_size", type=int, default=ONE_MILLION,
-                        help="Parquet row group size (default: 1000000)")
+    parser.add_argument("--row-group-size",  dest="row_group_size", type=int, default=100_000,
+                        help="Parquet row group size (default: 100000)")
     parser.add_argument("--only",            nargs="+", default=None,
                         help="Only build these convolutions by name, e.g. --only conv_cab_type")
     args = parser.parse_args()

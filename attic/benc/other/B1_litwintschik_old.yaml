@@ -1,4 +1,5 @@
-benchmark_id: HASH_B1
+# config/benchmarks/B1_litwintschik.yaml
+benchmark_id: B1
 name: "Mark Litwintschik — 1.1B NYC Taxi Rides using DuckDB"
 url: "https://tech.marksblogg.com/duckdb-1b-taxi-rides.html"
 published: "March 2024"
@@ -27,7 +28,7 @@ queries:
       SELECT cab_type, COUNT(*) FROM trips GROUP BY cab_type
     cac_sql: >
       SELECT cab_type,
-             SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
+             rb_count(rb_union_list(list(bitmap))) AS cnt
       FROM conv_cab_type
       WHERE pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
       GROUP BY cab_type
@@ -46,7 +47,7 @@ queries:
       SELECT cab_type, COUNT(*) FROM trips GROUP BY cab_type
     cac_sql: >
       SELECT cab_type,
-             SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
+             rb_count(rb_union_list(list(bitmap))) AS cnt
       FROM conv_cab_type
       WHERE pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
       GROUP BY cab_type
@@ -66,14 +67,14 @@ queries:
       SELECT passenger_count,
              AVG(total_amount) AS avg_total_amount
       FROM facts
-      WHERE  pickup_datetime BETWEEN TIMESTAMP '2009-01-01 00:00:00' AND TIMESTAMP '2015-12-31 23:59:59'
+      WHERE pickup_datetime BETWEEN '2009-01-01' AND '2015-12-31'
       GROUP BY passenger_count
     nature: "Grouped aggregate — average fare per passenger count"
     cac_phase: "Phase 2 (facts direct)"
     benchmark_time_ms: 234
     validation:
       compare: exact
-      note: "Compare AVG(total_amount) per passenger_count"
+      note: "AVG compared visually"
 
   - id: Q3
     enabled: true
@@ -83,16 +84,14 @@ queries:
              COUNT(*)
       FROM trips
       GROUP BY passenger_count, DATE_PART('year', pickup_datetime)
-      ORDER BY passenger_count, DATE_PART('year', pickup_datetime)
     cac_sql: >
       SELECT passenger_count,
-             LEFT(pickup_date, 4) as year,
-             SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
+             YEAR(pickup_date::DATE) AS year,
+             rb_count(rb_union_list(list(bitmap))) AS cnt
       FROM conv_pax_distance_date
       WHERE pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
-      GROUP BY passenger_count, LEFT(pickup_date, 4) 
-      ORDER BY passenger_count, year
-    nature: "Two-dimensional count — passenger count × year"
+      GROUP BY passenger_count, YEAR(pickup_date::DATE)
+    nature: "Two-dimensional count — passenger count × year WHERE pickup_date BETWEEN '2009-01-01' AND '2015-12-31'"
     cac_phase: "Phase 1"
     benchmark_time_ms: 734
     validation:
@@ -107,17 +106,15 @@ queries:
              COUNT(*)
       FROM trips
       GROUP BY passenger_count, DATE_PART('year', pickup_datetime), ROUND(trip_distance)
-      ORDER BY passenger_count, DATE_PART('year', pickup_datetime), ROUND(trip_distance)
     cac_sql: >
       SELECT passenger_count,
-             LEFT(pickup_date, 4) AS year,
+             YEAR(pickup_date::DATE) AS year,
              trip_distance AS distance,
-             SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
+             rb_count(rb_union_list(list(bitmap))) AS cnt
       FROM conv_pax_distance_date
       WHERE pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
-      GROUP BY passenger_count, LEFT(pickup_date, 4), trip_distance
-      ORDER BY passenger_count, year, trip_distance
-    nature: "Three-dimensional count with ranking — pax × year × distance"
+      GROUP BY passenger_count, YEAR(pickup_date::DATE), trip_distance
+    nature: "Three-dimensional count with ranking — pax × year × distance WHERE pickup_date BETWEEN '2009-01-01' AND '2015-12-31'"
     cac_phase: "Phase 1"
     benchmark_time_ms: 1334
     validation:

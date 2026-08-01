@@ -17,6 +17,7 @@ Usage:
 """
 
 import argparse
+import os
 import time
 from pathlib import Path
 
@@ -91,7 +92,7 @@ def write_fact_file(df: pd.DataFrame, fact_cols: list[dict],
             pq.write_table(
                 pa.Table.from_pandas(grp),
                 out_file,
-                compression="zstd",
+                compression=os.environ.get("PARQUET_COMPRESSION", "snappy"),
                 row_group_size=row_group_size
             )
             total += len(grp)
