@@ -192,6 +192,57 @@ def get_available_memory_mb() -> float:
 
 # ── Load convolutions ─────────────────────────────────────────────────────────
 
+def load_taxi_zones(con: duckdb.DuckDBPyConnection, entity: str,
+                    data_dir: str = "./data") -> bool:
+    """
+    Eagerly build a full in-memory taxi_zones table with an explicit schema and
+    row-by-row inserts from the TLC taxi_zone_lookup.csv. No lazy VIEW — the
+    table is materialized so B2 Q4/Q5 zone-name joins/subqueries are fast.
+    Columns: location_id INT, zone TEXT, borough TEXT, service_zone TEXT.
+    """
+    zone_csv = Path(data_dir) / "raw" / "entities" / entity / "taxi_zone_lookup.csv"
+    if not zone_csv.exists():
+        print(f"  taxi_zones: lookup not found at {zone_csv} — skipping")
+        return False
+    try:
+        import csv as _csv
+        con.execute("DROP TABLE IF EXISTS taxi_zones")
+        con.execute(
+            "CREATE TABLE taxi_zones ("
+            "  location_id  INTEGER,"
+            "  zone         VARCHAR,"
+            "  borough      VARCHAR,"
+            "  service_zone VARCHAR"
+            ")"
+        )
+        with open(zone_csv, newline="") as f:
+            reader = _csv.DictReader(f)
+            # tolerate header name variants
+            def pick(row, *names):
+                for n in names:
+                    if n in row and row[n] not in (None, ""):
+                        return row[n]
+                return None
+            batch = []
+            for row in reader:
+                loc = pick(row, "LocationID", "location_id")
+                batch.append((
+                    int(loc) if loc not in (None, "") else None,
+                    pick(row, "Zone", "zone"),
+                    pick(row, "Borough", "borough"),
+                    pick(row, "service_zone", "Service_Zone", "ServiceZone"),
+                ))
+        con.executemany(
+            "INSERT INTO taxi_zones VALUES (?, ?, ?, ?)", batch
+        )
+        nz = con.execute("SELECT COUNT(*) FROM taxi_zones").fetchone()[0]
+        print(f"  taxi_zones: TABLE ({nz} zones, in-memory, {len(batch)} rows inserted)")
+        return True
+    except Exception as e:
+        print(f"  warning: could not load taxi_zones: {e}")
+        return False
+
+
 def load_convolutions(con: duckdb.DuckDBPyConnection, entity: str,
                       data_dir: str = "./data",
                       try_to_cache: bool = True,
@@ -302,6 +353,9 @@ def load_convolutions(con: duckdb.DuckDBPyConnection, entity: str,
             print(f"  facts: VIEW ({facts_size:.1f}MB on disk)")
         except Exception as e:
             print(f"  warning: could not load facts: {e}")
+
+    # eagerly materialize taxi_zones (full in-memory table, explicit inserts)
+    load_taxi_zones(con, entity, data_dir)
 
     if avail_mb:
         print(f"\nMemory: {total_loaded_mb:.1f}MB loaded into RAM, "

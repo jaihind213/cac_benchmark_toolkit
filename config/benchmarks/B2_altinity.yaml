@@ -25,6 +25,8 @@ hardware:
 # Zone note:
 # 2009-2010 data has lat/long not zone IDs — conv_pickup_zone skipped for those years.
 # Matches Altinity LEFT JOIN behaviour where pre-2017 rows return null zone.
+#      WHERE pickup_datetime >= TIMESTAMP '2009-01-01 00:00:00'
+#        AND pickup_datetime <  TIMESTAMP '2016-01-01 00:00:00'
 
 queries:
   - id: Q1
@@ -37,8 +39,6 @@ queries:
       SELECT passenger_count,
              AVG(total_amount) AS avg_total_amount
       FROM facts
-      WHERE pickup_datetime >= TIMESTAMP '2009-01-01 00:00:00'
-        AND pickup_datetime <  TIMESTAMP '2016-01-01 00:00:00'
       GROUP BY passenger_count
     nature: "Grouped aggregate — average fare per passenger count"
     cac_phase: "Phase 2 (facts direct)"
@@ -97,38 +97,44 @@ queries:
   - id: Q4
     enabled: true
     sql: >
-      SELECT PULocationID, COUNT(*) AS c
-      FROM trips
-      WHERE PULocationID IS NOT NULL
-      GROUP BY PULocationID
+      SELECT tz.zone AS zone, COUNT(*) AS c
+      FROM trips AS td
+      LEFT JOIN taxi_zones AS tz ON td.PULocationID = tz.location_id
+      GROUP BY tz.zone
       ORDER BY c DESC
     cac_sql: >
-      SELECT PULocationID,
-             SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
-      FROM conv_pickup_zone
-      WHERE PULocationID IS NOT NULL
-      GROUP BY PULocationID
+      SELECT tz.zone AS zone,
+             SUM(rb_count_hash(c.bitmap, c.bitmap_hash)) AS cnt
+      FROM conv_pickup_zone AS c
+      LEFT JOIN taxi_zones AS tz ON c.PULocationID = tz.location_id
+      WHERE c.pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
+      GROUP BY tz.zone
       ORDER BY cnt DESC
-    nature: "Top pickup zones by trip count"
-    cac_phase: "Phase 1"
+    nature: "Top pickup zones by trip count (JOIN to taxi_zones, group by name)"
+    cac_phase: "Phase 1 + zone join"
     benchmark_time_ms: 940
-    zone_note: "2009-2010 excluded from both (no location IDs)"
+    zone_note: "2009-2010 excluded from both (no location IDs). Matches Altinity Q4 LEFT JOIN + GROUP BY zone name."
     validation:
       compare: exact
 
   - id: Q5
     enabled: true
     sql: >
-      SELECT COUNT(*) FROM trips
-      WHERE PULocationID = 162
+      SELECT COUNT(*) AS c
+      FROM trips AS td
+      WHERE td.PULocationID IN (
+        SELECT location_id FROM taxi_zones WHERE zone = 'Midtown East'
+      )
     cac_sql: >
-      SELECT SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
-      FROM conv_pickup_zone
-      WHERE pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
-        AND PULocationID = 162
-    nature: "Count trips from Midtown East (LocationID 162)"
-    cac_phase: "Phase 1"
+      SELECT SUM(rb_count_hash(c.bitmap, c.bitmap_hash)) AS cnt
+      FROM conv_pickup_zone AS c
+      WHERE c.pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
+        AND c.PULocationID IN (
+          SELECT location_id FROM taxi_zones WHERE zone = 'Midtown East'
+        )
+    nature: "Count trips from Midtown East (IN subquery on taxi_zones)"
+    cac_phase: "Phase 1 + zone subquery"
     benchmark_time_ms: 330
-    zone_note: "2009-2010 excluded (no location IDs)"
+    zone_note: "2009-2010 excluded. Matches Altinity Q5 rewrite: PULocationID IN (SELECT location_id FROM taxi_zones WHERE zone = 'Midtown East')."
     validation:
       compare: exact
