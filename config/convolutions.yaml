@@ -88,6 +88,7 @@ convolutions:
       bitmap_col: entity_id
       add_cardinality_col: true
       add_hash_col: true
+      keep_null_dims: true      # keep NULL PULocationID (2009-2010) so Q4 LEFT JOIN yields a NULL-zone bucket matching Altinity
       partitions:
         - col: pickup_date
           parts: [year]

@@ -177,7 +177,9 @@ def get_connection(threads: int = 4, temp_dir: str = "/tmp/duckdb_spill") -> duc
     import os
     os.makedirs(temp_dir, exist_ok=True)
     con = duckdb.connect()
-    con.execute(f"SET threads = {threads}")
+    if threads > 1:
+        print(f"setting threads...{threads}")
+        con.execute(f"SET threads = {threads}")
     con.execute(f"SET temp_directory = '{temp_dir}'")
     for fn, func, args, ret in [
         ("rb_and",        rb_and,        ["BLOB", "BLOB"],            "BLOB"),
@@ -463,6 +465,19 @@ def validate_query(con: duckdb.DuckDBPyConnection, q: dict,
         rename_map = dict(zip(cac_result.columns, sql_result.columns))
         cac_sorted = cac_sorted.rename(columns=rename_map)
 
+        # NaN-safe: fill NaN in key (non-value) columns with a sentinel so the
+        # NULL group (e.g. NULL zone from a LEFT JOIN) sorts to a stable position
+        # and compares equal. Without this, NaN == NaN is False and a matching
+        # NULL row is falsely reported as a mismatch.
+        key_cols = list(sql_sorted.columns[:-1])
+        for col in key_cols:
+            if col in sql_sorted.columns:
+                sql_sorted[col] = sql_sorted[col].fillna("__NULL__")
+            if col in cac_sorted.columns:
+                cac_sorted[col] = cac_sorted[col].fillna("__NULL__")
+        sql_sorted = sql_sorted.sort_values(key_cols).reset_index(drop=True)
+        cac_sorted = cac_sorted.sort_values(key_cols).reset_index(drop=True)
+
         # round float columns to 2dp before comparison
         for col in sql_sorted.columns:
             if sql_sorted[col].dtype in ("float32", "float64"):
@@ -499,7 +514,11 @@ def validate_query(con: duckdb.DuckDBPyConnection, q: dict,
                 "cac_result": cac_sorted,
             }
 
-        matches = (sql_sorted == cac_sorted).all().all()
+        if list(sql_sorted.columns) != list(cac_sorted.columns):
+            matches = False
+        else:
+            eq = (sql_sorted.values == cac_sorted.values)
+            matches = bool(eq.all())
         return {
             "status":     "✓ MATCH" if matches else "✗ MISMATCH",
             "compare":    "exact (row×col)",

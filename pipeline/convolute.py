@@ -107,12 +107,24 @@ def build_convolution(df: pd.DataFrame, conv: dict) -> dict[str, pd.DataFrame] |
     partitions = output_cfg.get("partitions", [])
     add_hash   = output_cfg.get("add_hash_col", False)
     add_card   = output_cfg.get("add_cardinality_col", False)
+    keep_null  = output_cfg.get("keep_null_dims", False)
 
     # check required source columns exist
     missing = [d["col"] for d in dim_cols if d["col"] not in df.columns]
     if missing:
-        print(f"    skipping {conv['name']} — missing columns: {missing}")
-        return None
+        # when keep_null_dims is set, a missing dim column is treated as an
+        # all-NULL column rather than skipping the file. This lets rows from
+        # years where the column doesn't exist (e.g. 2009-2010 PULocationID)
+        # still contribute — they group under a NULL dimension value, which a
+        # downstream LEFT JOIN maps to a NULL bucket (matches Altinity Q4).
+        if keep_null:
+            df = df.copy()
+            for m in missing:
+                df[m] = pd.NA
+            print(f"    {conv['name']}: columns {missing} absent — filled as NULL (keep_null_dims)")
+        else:
+            print(f"    skipping {conv['name']} — missing columns: {missing}")
+            return None
 
     # build work dataframe with transformed columns
     work      = pd.DataFrame()
@@ -154,7 +166,7 @@ def build_convolution(df: pd.DataFrame, conv: dict) -> dict[str, pd.DataFrame] |
             rows = []
 
             if group_cols:
-                for keys, grp in part_grp.groupby(group_cols, sort=True):
+                for keys, grp in part_grp.groupby(group_cols, sort=True, dropna=not keep_null):
                     bm       = BitMap(grp[bitmap_col].dropna().astype(int).tolist())
                     bm_bytes = bytes(bm.serialize())
                     row = dict(zip(group_cols, keys if isinstance(keys, tuple) else (keys,)))
@@ -186,7 +198,7 @@ def build_convolution(df: pd.DataFrame, conv: dict) -> dict[str, pd.DataFrame] |
     else:
         # no partitioning — one output file
         rows = []
-        for keys, grp in work.groupby(col_names, sort=True):
+        for keys, grp in work.groupby(col_names, sort=True, dropna=not keep_null):
             bm       = BitMap(grp[bitmap_col].dropna().astype(int).tolist())
             bm_bytes = bytes(bm.serialize())
             row = dict(zip(col_names, keys if isinstance(keys, tuple) else (keys,)))
@@ -209,6 +221,10 @@ def convolute_file(path: Path, conv_root: Path, conv_specs: list[dict],
     for conv in conv_specs:
         if conv.get("entity", entity) != entity:
             continue
+
+        # read the same keep_null_dims flag build_convolution uses, so the
+        # re-aggregate path below groups NULL dim keys consistently
+        keep_null = conv.get("output", {}).get("keep_null_dims", False)
 
         result_map = build_convolution(df, conv)
         if result_map is None:
@@ -247,11 +263,8 @@ def convolute_file(path: Path, conv_root: Path, conv_specs: list[dict],
                 has_card = "cardinality" in result_df.columns
                 has_hash = "bitmap_hash" in result_df.columns
                 group_df = result_df.copy()
-                for col in dim_cols:
-                    if group_df[col].dtype == object:
-                        group_df[col] = group_df[col].astype(str)
                 rows = []
-                for keys, grp in group_df.groupby(dim_cols, sort=True):
+                for keys, grp in group_df.groupby(dim_cols, sort=True, dropna= not keep_null):
                     combined = BitMap()
                     for bm_bytes in result_df.loc[grp.index, "bitmap"]:
                         combined |= BitMap.deserialize(bm_bytes)

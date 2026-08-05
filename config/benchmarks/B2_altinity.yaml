@@ -60,7 +60,6 @@ queries:
              LEFT(pickup_date, 4) as year,
              SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
       FROM conv_pax_distance_date
-      WHERE pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
       GROUP BY passenger_count, LEFT(pickup_date, 4)
       ORDER BY passenger_count, year
     nature: "Two-dimensional count — passenger count × year"
@@ -85,7 +84,6 @@ queries:
              trip_distance AS distance,
              SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
       FROM conv_pax_distance_date
-      WHERE pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
       GROUP BY passenger_count, LEFT(pickup_date, 4), trip_distance
       ORDER BY passenger_count, year, trip_distance
     nature: "Three-dimensional count with ranking"
@@ -107,13 +105,12 @@ queries:
              SUM(rb_count_hash(c.bitmap, c.bitmap_hash)) AS cnt
       FROM conv_pickup_zone AS c
       LEFT JOIN taxi_zones AS tz ON c.PULocationID = tz.location_id
-      WHERE c.pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
       GROUP BY tz.zone
       ORDER BY cnt DESC
     nature: "Top pickup zones by trip count (JOIN to taxi_zones, group by name)"
     cac_phase: "Phase 1 + zone join"
     benchmark_time_ms: 940
-    zone_note: "2009-2010 excluded from both (no location IDs). Matches Altinity Q4 LEFT JOIN + GROUP BY zone name."
+    zone_note: "2009-2010 zone-less trips (NULL PULocationID) are kept and land in the NULL-zone bucket via LEFT JOIN, matching Altinity Q4 exactly (plain LEFT JOIN, GROUP BY zone, no filter)."
     validation:
       compare: exact
 
@@ -128,8 +125,7 @@ queries:
     cac_sql: >
       SELECT SUM(rb_count_hash(c.bitmap, c.bitmap_hash)) AS cnt
       FROM conv_pickup_zone AS c
-      WHERE c.pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
-        AND c.PULocationID IN (
+      WHERE c.PULocationID IN (
           SELECT location_id FROM taxi_zones WHERE zone = 'Midtown East'
         )
     nature: "Count trips from Midtown East (IN subquery on taxi_zones)"
