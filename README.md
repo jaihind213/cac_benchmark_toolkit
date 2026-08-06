@@ -64,6 +64,7 @@ python -m pipeline.clean --entity trips --years 2009-2015
 
 # 5. Create facts (slim fact table from clean data).
 python -m pipeline.create_facts --entity trips --row-group-size 500000 --years 2009-2015
+python -m pipeline.build_facts_db --entity trips
 
 # 6. Build convolutions (bitmap per dimension value from clean data)
 python -m pipeline.convolute --entity trips --years 2009-2015 --row-group-size 100000

@@ -437,29 +437,45 @@ def load_convolutions(con: duckdb.DuckDBPyConnection, entity: str,
         facts_glob = str(facts_root / "**" / "*.parquet")
         facts_size = sum(f.stat().st_size for f in facts_root.rglob("*.parquet")) / 1e6
 
-        # inspect one facts file to report row-group size + compression
-        try:
-            import pyarrow.parquet as _pq
-            sample = next(facts_root.rglob("*.parquet"))
-            md     = _pq.ParquetFile(sample).metadata
-            n_rg   = md.num_row_groups
-            rg0    = md.row_group(0)
-            rg_rows = rg0.num_rows
-            codec   = rg0.column(0).compression
-            print(f"  facts parquet: {rg_rows:,} rows/group, {n_rg} groups in sample, "
-                  f"compression={codec}")
-        except Exception as e:
-            print(f"  (could not read facts parquet metadata: {e})")
-
-        try:
-            con.execute(
-                f"CREATE OR REPLACE VIEW facts AS "
-                f"SELECT * FROM read_parquet('{facts_glob}', hive_partitioning=false)"
-            )
-            tables_loaded.append("facts")
-            print(f"  facts: VIEW ({facts_size:.1f}MB on disk)")
-        except Exception as e:
-            print(f"  warning: could not load facts: {e}")
+        # prefer a prebuilt persistent DuckDB table (facts_duck.db) over a
+        # parquet view — native storage gives the facts scan zonemaps + stats.
+        facts_db = Path(data_dir) / "facts_duck.db"
+        if facts_db.exists():
+            try:
+                con.execute(f"ATTACH '{facts_db}' AS factsdb (READ_ONLY)")
+                con.execute("CREATE OR REPLACE VIEW facts AS SELECT * FROM factsdb.facts")
+                n = con.execute("SELECT COUNT(*) FROM facts").fetchone()[0]
+                db_mb = facts_db.stat().st_size / 1e6
+                tables_loaded.append("facts")
+                print(f"  facts: TABLE via {facts_db.name} "
+                      f"({db_mb:.1f}MB, {n:,} rows, native DuckDB storage)")
+            except Exception as e:
+                print(f"  warning: could not attach {facts_db.name} ({e}); "
+                      f"falling back to parquet view")
+                facts_db = None
+        if not facts_db or not facts_db.exists():
+            try:
+                import pyarrow.parquet as _pq
+                sample = next(facts_root.rglob("*.parquet"))
+                md     = _pq.ParquetFile(sample).metadata
+                n_rg   = md.num_row_groups
+                rg0    = md.row_group(0)
+                rg_rows = rg0.num_rows
+                codec   = rg0.column(0).compression
+                print(f"  facts parquet: {rg_rows:,} rows/group, {n_rg} groups in sample, "
+                      f"compression={codec}")
+            except Exception as e:
+                print(f"  (could not read facts parquet metadata: {e})")
+            try:
+                con.execute(
+                    f"CREATE OR REPLACE VIEW facts AS "
+                    f"SELECT * FROM read_parquet('{facts_glob}', hive_partitioning=false)"
+                )
+                tables_loaded.append("facts")
+                print(f"  facts: VIEW ({facts_size:.1f}MB parquet on disk — "
+                      f"build facts_duck.db for native storage)")
+            except Exception as e:
+                print(f"  warning: could not load facts: {e}")
 
     # eagerly materialize taxi_zones (full in-memory table, explicit inserts)
     load_taxi_zones(con, entity, data_dir)
