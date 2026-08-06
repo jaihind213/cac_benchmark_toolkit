@@ -123,6 +123,23 @@ After you run the benchmark, refer to the `results` folder — results are also 
 
 ---
 
+To be sure we counted more than 1 billion trips, we ran the following query:
+
+```sql
+SELECT cab_type,
+             SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
+      FROM conv_cab_type
+      GROUP BY cab_type
+  Q1     Distinct count per dimension value (cab type)         44.57ms           498ms  speedup=11.2x
+         validation: ✓ MATCH
+         +----------+--------------+
+         | cab_type | count_star() |
+         +----------+--------------+
+         | green    | 35027825     |
+         | yellow   | 1170834009   |
+         +----------+--------------+
+```
+
 ### B1 — Litwintschik Benchmark: Cardinality Mode
 
 **Machine:** AWS m7gd.4xlarge (16 threads, 24GB, cache on)
