@@ -43,6 +43,81 @@ import yaml
 from pyroaring import BitMap
 
 RESULTS_DIR = Path("results")
+
+def resolve_benchmark_cores(spec: dict) -> str:
+    """Determine the reference benchmark's core count for the summary.
+    Order: explicit hardware.benchmark_cores -> parse 'N vCPU(s)/cores/threads'
+    from hardware.actual -> map known cloud_equivalent instance types -> '?'."""
+    import re
+    hw = spec.get("hardware", {}) or {}
+
+    # 1) explicit fields (cores_used preferred, then benchmark_cores)
+    if hw.get("cores_used") not in (None, ""):
+        return str(hw["cores_used"])
+    if hw.get("benchmark_cores") not in (None, ""):
+        return str(hw["benchmark_cores"])
+
+    # 2) parse a count out of the free-text 'actual' description
+    actual = str(hw.get("actual", ""))
+    m = re.search(r"(\d+)\s*(?:vcpus?|v?cpus?|cores?|threads?)", actual, re.IGNORECASE)
+    if m:
+        return m.group(1)
+
+    # 3) map known instance types (add more as needed)
+    known = {
+        "m5.8xlarge": 32, "m5.4xlarge": 16, "m5.16xlarge": 64,
+        "c7i.8xlarge": 32, "c6id.8xlarge": 32, "c7gd.8xlarge": 32,
+        "i9-14900k": 32,  # 8 P-cores + 16 E-cores = 32 threads
+    }
+    for key, cores in known.items():
+        if key in actual.lower() or key in str(hw.get("cloud_equivalent", "")).lower():
+            return str(cores)
+
+    return "?"
+
+
+def detect_machine_type() -> str:
+    """Best-effort machine identifier for the summary.
+    Tries EC2 instance metadata (IMDSv2 then IMDSv1), then falls back to a
+    generic host/CPU description. Never raises."""
+    # EC2 IMDSv2
+    try:
+        import urllib.request
+        token_req = urllib.request.Request(
+            "http://169.254.169.254/latest/api/token",
+            method="PUT",
+            headers={"X-aws-ec2-metadata-token-ttl-seconds": "60"},
+        )
+        token = urllib.request.urlopen(token_req, timeout=0.3).read().decode()
+        itype_req = urllib.request.Request(
+            "http://169.254.169.254/latest/meta-data/instance-type",
+            headers={"X-aws-ec2-metadata-token": token},
+        )
+        itype = urllib.request.urlopen(itype_req, timeout=0.3).read().decode().strip()
+        if itype:
+            return f"AWS {itype}"
+    except Exception:
+        pass
+    # EC2 IMDSv1
+    try:
+        import urllib.request
+        itype = urllib.request.urlopen(
+            "http://169.254.169.254/latest/meta-data/instance-type", timeout=0.3
+        ).read().decode().strip()
+        if itype:
+            return f"AWS {itype}"
+    except Exception:
+        pass
+    # generic fallback: platform + core count
+    try:
+        import platform, os
+        cores = os.cpu_count()
+        machine = platform.machine()
+        node = platform.node()
+        return f"{node} ({machine}, {cores} cores)"
+    except Exception:
+        return "unknown"
+
 RESULTS_DIR.mkdir(exist_ok=True)
 
 
@@ -611,6 +686,7 @@ def run_benchmark(benchmark_id: str, entity: str, data_dir: str = "./data",
         sql     = q.get("cac_sql") or q["sql"]
         nature  = q["nature"]
         bm_time = q.get("benchmark_time_ms")
+        match_status = ""  # "match" | "mismatch" | "skipped" | "error" | ""
 
         try:
             cac_time = run_query(con, sql, iterations)
@@ -632,15 +708,19 @@ def run_benchmark(benchmark_id: str, entity: str, data_dir: str = "./data",
             if q.get("validation"):
                 val = validate_query(con, q, entity, data_dir)
                 if val["status"] == "skipped":
+                    match_status = "skipped"
                     print(f"         validation: skipped — {val.get('reason','')}")
                 elif val["status"] == "ERROR":
+                    match_status = "error"
                     print(f"         validation: ERROR — {val.get('reason','')}")
                 elif "✓" in val["status"]:
+                    match_status = "match"
                     # match — print result inline
                     print(f"         validation: {val['status']}")
                     if "sql_result" in val:
                         print(_fmt_table(val["sql_result"]))
                 else:
+                    match_status = "mismatch"
                     # mismatch — save to file
                     print(f"         validation: {val['status']}")
                     if "sql_result" in val and "cac_result" in val:
@@ -673,6 +753,7 @@ def run_benchmark(benchmark_id: str, entity: str, data_dir: str = "./data",
             "memory_limit":      memory_limit,
             "try_to_cache":      try_to_cache,
             "cached_tables":     ",".join(cached_tables) if cached_tables else "",
+            "match_status":      match_status,
             "run_at":            datetime.now().isoformat(),
         })
 
@@ -685,20 +766,39 @@ def run_benchmark(benchmark_id: str, entity: str, data_dir: str = "./data",
     print(f"\n✓ Results → {out_file}")
 
     # reprint the results table (2nd time) as a clean summary
-    print(f"\n{'='*80}")
+    machine = detect_machine_type()
+    bench_cores = resolve_benchmark_cores(spec)
+    # map query_id -> category from the spec
+    cat_by_id = {q["id"]: q.get("category", "") for q in spec["queries"]}
+
+    # order: distinct_counting first, raw_data_aggregate last (stable within group)
+    def sort_key(r):
+        cat = cat_by_id.get(r["query_id"], "")
+        return (1 if cat == "raw_data_aggregate" else 0, r["query_id"])
+    ordered = sorted(results, key=sort_key)
+
+    print(f"\n{'='*104}")
     print(f"SUMMARY — {spec['benchmark_id']}  ({threads} threads, {memory_limit}, "
           f"cache {'on' if try_to_cache else 'off'})")
-    print(f"{'='*80}")
-    print(f"  {'Query':<6} {'CAC (ms)':>12} {'Benchmark (ms)':>16} {'Speedup':>10}")
-    print(f"  {'-'*6} {'-'*12} {'-'*16} {'-'*10}")
-    for r in results:
+    print(f"Machine: {machine}")
+    validated = [r for r in results if r.get("match_status") in ("match", "mismatch")]
+    n_match   = sum(1 for r in validated if r.get("match_status") == "match")
+    print(f"results_match_with_raw_sql : {n_match}/{len(validated)}")
+    print(f"Note: CAC (ms) is the MEDIAN of {iterations} iterations per query.")
+    print(f"{'='*104}")
+    print(f"  {'Query':<6} {'Category':<20} {'CAC (ms)':>12} {'CAC threads':>12} "
+          f"{'Benchmark (ms)':>16} {'Bench threads':>14} {'Speedup':>10}")
+    print(f"  {'-'*6} {'-'*20} {'-'*12} {'-'*12} {'-'*16} {'-'*14} {'-'*10}")
+    for r in ordered:
         cac = r["cac_time_ms"]
         bm  = r["benchmark_time_ms"]
         sp  = r["speedup"] or "—"
-        cac_s = f"{cac:>12}" if cac != "" else f"{'ERROR':>12}"
+        cat = cat_by_id.get(r["query_id"], "")
+        cac_s = f"{cac:>12.2f}" if isinstance(cac, (int, float)) else (f"{'ERROR':>12}" if cac == "" else f"{cac:>12}")
         bm_s  = f"{bm:>16}" if bm != "" else f"{'—':>16}"
-        print(f"  {r['query_id']:<6} {cac_s} {bm_s} {sp:>10}")
-    print(f"{'='*80}")
+        print(f"  {r['query_id']:<6} {cat:<20} {cac_s} {threads:>12} "
+              f"{bm_s} {str(bench_cores):>14} {sp:>10}")
+    print(f"{'='*104}")
 
     return results
 

@@ -2,6 +2,10 @@
 
 Reproducible benchmark pipeline for the Convolution Analytics Cube (CAC).
 
+The paper "Convolution Analytics Cube: A New Approach to OLAP" (https://todo) describes the CAC data structure and its performance characteristics. 
+
+This repository contains a benchmark pipeline that reproduces the results from the paper, using the NYC taxi dataset as a test case.
+
 ## Directory Structure
 
 ```
@@ -58,16 +62,7 @@ python -m pipeline.enrich --entity trips --pg-dsn "$PG_DSN" --years 2009-2015
 # 4. Clean (normalise schema + filter invalid rows)
 python -m pipeline.clean --entity trips --years 2009-2015
 
-# 5. Create facts (slim fact table from clean data) - you can run the below in parallel :)
-python -m pipeline.create_facts --entity trips --row-group-size 500000 --years 2009-2009
-python -m pipeline.create_facts --entity trips --row-group-size 500000 --years 2010-2010
-python -m pipeline.create_facts --entity trips --row-group-size 500000 --years 2011-2011
-python -m pipeline.create_facts --entity trips --row-group-size 500000 --years 2012-2012
-python -m pipeline.create_facts --entity trips --row-group-size 500000 --years 2013-2013
-python -m pipeline.create_facts --entity trips --row-group-size 500000 --years 2014-2014
-python -m pipeline.create_facts --entity trips --row-group-size 500000 --years 2015-2015
-
-# or # this is slower
+# 5. Create facts (slim fact table from clean data).
 python -m pipeline.create_facts --entity trips --row-group-size 500000 --years 2009-2015
 
 # 6. Build convolutions (bitmap per dimension value from clean data)
@@ -77,12 +72,20 @@ python -m pipeline.convolute --entity trips --years 2009-2015 --row-group-size 1
 ## Run Benchmark
 
 ```bash
-# Run B1/B2 queries against CAC convolutions.
+# Run benchmarks queries against CAC convolutions.
 # There are variants of the benchmark queries, so you can run them all and compare results.
-python3.11 -m benchmark.run_lookup_bm_hash --benchmark B1_litwintschik --entity trips --memory 5GB --duckdb-threads 8 --iterations 10 --try-to-cache
-python3.11 -m benchmark.run_lookup_bm_hash --benchmark B2_altinity --entity trips --memory 5GB --duckdb-threads 8 --iterations 10 --try-to-cache
-python3.11 -m benchmark.run_lookup_bm_hash --benchmark B1_alternative_litwintschik --entity trips --memory 5GB --duckdb-threads 8 --iterations 10 --try-to-cache 
-python3.11 -m benchmark.run_lookup_bm_hash --benchmark B2_alternative_altinity --entity trips --memory 5GB --duckdb-threads 8 --iterations 10 --try-to-cache 
+export NUM_THREADS=8
+export MEMORY=8GB
+# you have 2 options for the benchmark: use bitmap hash or cardinality
+# we pre compute bitmap cardinality in the convolutions, so you can use that for faster queries.
+# we also cache the bitmap hashes in memory, so you can use that for faster queries. this saves on the fly computation of bitmap hashes & deserialization of bitmaps from parquet.
+# Since most of the Benchmark queries are around distinct counting, they can take advantage of the pre-computed bitmap cardinality. However, 
+# if you want to test the performance of the bitmap hash approach, you can use that as well.
+python3.11 -m benchmark.run_lookup_bm_hash --benchmark B1_litwintschik_use_cardinality --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache 
+python3.11 -m benchmark.run_lookup_bm_hash --benchmark B2_altinity_use_cardinality --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache 
+#
+python3.11 -m benchmark.run_lookup_bm_hash --benchmark B1_litwintschik_use_bitmap_hash --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache
+python3.11 -m benchmark.run_lookup_bm_hash --benchmark B2_altinity_use_bitmap_hash --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache
  
 
 # Consolidate with benchmark source times + VM costs
@@ -92,20 +95,39 @@ python -m benchmark.consolidate --benchmark B1 --cac-instance r6i.xlarge
 ## Results
 
 ```
-results/B1_cac_times.csv       — benchmark_id, query_id, cac_time_ms, speedup
-results/B1_consolidated.csv    — with benchmark source times
-results/B1_cost.csv            — VM cost comparison
-results/logs/pipeline_*.csv    — step-by-step timing
-reports/clean_report_*.csv     — per-file clean/dirty counts
-reports/enrich_report_*.csv    — per-file enrich timing
+please refer to 'results' folder.
 ```
 
-## Utility Scripts
+## Source Blogs
 
-```bash
-# Fix schema on already-enriched data (avoids re-running 4-hour enrich)
-python3 fix_schema.py --entity trips
+This benchmark is based on queries from the following blog posts:
 
-# Verify facts table integrity
-python3 verify_facts.py --entity trips
-```
+- [DuckDB 1B Taxi Rides — Mark Litwintschik](https://tech.marksblogg.com/duckdb-1b-taxi-rides.html)
+- [ClickHouse and Redshift Face Off Again in NYC Taxi Rides Benchmark — Altinity](https://www.altinity.com/blog/clickhouse-and-redshift-face-off-again-in-nyc-taxi-rides-benchmark)
+
+### Disclaimer
+
+We do not own or claim affiliation with the content of these blogs. Their benchmark queries are used here purely as a reference point for our own benchmark.
+
+### Thanks
+
+We would like to express our sincere gratitude to **Mark Litwintschik** and **Altinity** for publishing their benchmark articles and queries. Their work provided a valuable reference point for our own benchmark and has contributed significantly to the database community's understanding of analytical query performance.
+
+Their work inspired us to create this benchmark, and we are grateful for the foundation they established for the community.
+
+We encourage readers to visit their original articles, explore their work in full, and support their continued contributions to the open data and database communities.
+
+### Archived copies
+
+Since these pages may go offline, their archived copies are available for reference:
+
+- [Litwintschik Benchmark (archived)](https://web.archive.org/web/20260724041713/https://tech.marksblogg.com/duckdb-1b-taxi-rides.html)
+- [Altinity Benchmark (archived)](https://web.archive.org/web/20240530164230/https://altinity.com/blog/clickhouse-and-redshift-face-off-again-in-nyc-taxi-rides-benchmark)
+
+#### PDF snapshots of the above blogs
+
+refer to the `blogs/snapshots` folder for pdf snapshots of the above blogs.
+
+#### Screen recording of the above blogs
+
+todo:

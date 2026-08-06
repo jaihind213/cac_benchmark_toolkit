@@ -1,4 +1,4 @@
-benchmark_id: HASH_B1
+benchmark_id: B1_litwintschik_use_cardinality
 name: "Mark Litwintschik — 1.1B NYC Taxi Rides using DuckDB"
 url: "https://tech.marksblogg.com/duckdb-1b-taxi-rides.html"
 published: "March 2024"
@@ -16,18 +16,21 @@ software:
   version: "0.10.0"
 
 hardware:
+  cores_used: 32
+  source_from_blog: "It has 8 performance cores and 16 efficiency cores with a total of 32 threads and 32 MB of L2 cache."
   actual: "Intel Core i9-14900K @ 6GHz, 48GB DDR5, 4TB NVMe SSD"
   cloud_equivalent: "m5.8xlarge"
   region: "us-east-1"
 
 queries:
   - id: Q0
+    category: distinct_counting
     enabled: false
     sql: >
       SELECT cab_type, COUNT(*) FROM trips GROUP BY cab_type
     cac_sql: >
       SELECT cab_type,
-             SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
+             SUM(cardinality) AS cnt
       FROM conv_cab_type
       WHERE pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
       GROUP BY cab_type
@@ -41,12 +44,13 @@ queries:
       compare: exact
 
   - id: Q1
+    category: distinct_counting
     enabled: true
     sql: >
       SELECT cab_type, COUNT(*) FROM trips GROUP BY cab_type
     cac_sql: >
       SELECT cab_type,
-             SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
+             SUM(cardinality) AS cnt
       FROM conv_cab_type
       GROUP BY cab_type
     nature: "Distinct count per dimension value (cab type)"
@@ -56,6 +60,7 @@ queries:
       compare: exact
 
   - id: Q2
+    category: raw_data_aggregate
     enabled: true
     sql: >
       SELECT passenger_count, AVG(total_amount)
@@ -74,6 +79,7 @@ queries:
       note: "Compare AVG(total_amount) per passenger_count"
 
   - id: Q3
+    category: distinct_counting
     enabled: true
     sql: >
       SELECT passenger_count,
@@ -85,7 +91,7 @@ queries:
     cac_sql: >
       SELECT passenger_count,
              LEFT(pickup_date, 4) as year,
-             SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
+             SUM(cardinality) AS cnt
       FROM conv_pax_distance_date
       GROUP BY passenger_count, LEFT(pickup_date, 4) 
       ORDER BY passenger_count, year
@@ -96,6 +102,7 @@ queries:
       compare: exact
 
   - id: Q4
+    category: distinct_counting
     enabled: true
     sql: >
       SELECT passenger_count,
@@ -109,7 +116,7 @@ queries:
       SELECT passenger_count,
              LEFT(pickup_date, 4) AS year,
              trip_distance AS distance,
-             SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
+             SUM(cardinality) AS cnt
       FROM conv_pax_distance_date
       GROUP BY passenger_count, LEFT(pickup_date, 4), trip_distance
       ORDER BY passenger_count, year, trip_distance

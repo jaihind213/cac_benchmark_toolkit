@@ -1,5 +1,5 @@
-# config/benchmarks/B2_altinity.yaml
-benchmark_id: B2
+# config/benchmarks/B2_altinity_use_cardinality.yaml
+benchmark_id: B2_altinity_use_cardinality
 name: "Altinity — ClickHouse vs Redshift NYC Taxi Benchmark"
 url: "https://altinity.com/blog/clickhouse-and-redshift-face-off-again-in-nyc-taxi-rides-benchmark"
 published: "2020"
@@ -17,6 +17,8 @@ software:
   version: "20.6.6.44"
 
 hardware:
+  cores_used: 32
+  source_from_blog: "We start with the latest ClickHouse version 20.6.6.44 running inside Kubernetes on an Amazon m5.8large EC2 instance."
   actual: "AWS m5.8xlarge — 32 vCPUs, 128 GB RAM"
   cloud_equivalent: "m5.8xlarge"
   region: "us-east-1"
@@ -28,6 +30,7 @@ hardware:
 
 queries:
   - id: Q1
+    category: raw_data_aggregate
     enabled: true
     sql: >
       SELECT passenger_count, AVG(total_amount)
@@ -45,6 +48,7 @@ queries:
       compare: exact
 
   - id: Q2
+    category: distinct_counting
     enabled: true
     sql: >
       SELECT passenger_count,
@@ -67,6 +71,7 @@ queries:
       compare: exact
 
   - id: Q3
+    category: distinct_counting
     enabled: true
     sql: >
       SELECT passenger_count,
@@ -91,6 +96,7 @@ queries:
       compare: exact
 
   - id: Q4
+    category: distinct_counting
     enabled: true
     sql: >
       SELECT tz.zone AS zone, COUNT(*) AS c
@@ -113,6 +119,7 @@ queries:
       compare: exact
 
   - id: Q5
+    category: distinct_counting
     enabled: true
     sql: >
       SELECT COUNT(*) AS c
