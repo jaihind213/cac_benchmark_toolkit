@@ -109,15 +109,16 @@ export NUM_THREADS=8
 export MEMORY=8GB
 
 # Cardinality mode (native SUM(cardinality))
-python3.11 -m benchmark.run_benchmark --benchmark B1_litwintschik_use_cardinality --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache
-python3.11 -m benchmark.run_benchmark --benchmark B2_altinity_use_cardinality      --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache
+python3.11 -m benchmark.run_lookup_bm_hash --benchmark B1_litwintschik_use_cardinality --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache
+python3.11 -m benchmark.run_lookup_bm_hash --benchmark B2_altinity_use_cardinality      --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache
 
 # Bitmap-hash mode (rb_count_hash UDF over the hash-keyed cache)
-python3.11 -m benchmark.run_benchmark --benchmark B1_litwintschik_use_bitmap_hash --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache
-python3.11 -m benchmark.run_benchmark --benchmark B2_altinity_use_bitmap_hash      --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache
+python3.11 -m benchmark.run_lookup_bm_hash --benchmark B1_litwintschik_use_bitmap_hash --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache
+python3.11 -m benchmark.run_lookup_bm_hash --benchmark B2_altinity_use_bitmap_hash      --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache
 
 # Consolidate CAC times with the source blog times and per-query VM cost framing.
 # --cac-instance / --region describe the machine you ran CAC on.
+#todo
 python -m benchmark.consolidate --benchmark B1 B2 --cac-instance m7gd.4xlarge --region ap-southeast-1
 ```
 
