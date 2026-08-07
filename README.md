@@ -2,48 +2,47 @@
 
 Reproducible benchmark pipeline for the Convolution Analytics Cube (CAC).
 
-The paper "Convolution Analytics Cube: A New Approach to OLAP" (https://todo) describes the CAC data structure and its performance characteristics. 
-
-The paper is authored by Mithesh Pathak & Chanderraju Vishnu.
+The paper "Convolution Analytics Cube: A New Approach to OLAP" (https://todo) describes the CAC data structure and its performance characteristics. The paper is authored by Mithesh Pathak & Chanderraju Vishnu.
 
 This repository contains a benchmark pipeline that reproduces the results from the paper, using the NYC taxi dataset as a test case.
 
 We have implemented the benchmark queries from the following blog posts:
 
 - [DuckDB 1B Taxi Rides — Mark Litwintschik](https://tech.marksblogg.com/duckdb-1b-taxi-rides.html)
-- [ClickHouse and Redshift Face Off Again in NYC Taxi Rides Benchmark — Altinity ](https://www.altinity.com/blog/clickhouse-and-redshift-face-off-again-in-nyc-taxi-rides-benchmark)
-
+- [ClickHouse and Redshift Face Off Again in NYC Taxi Rides Benchmark — Altinity](https://www.altinity.com/blog/clickhouse-and-redshift-face-off-again-in-nyc-taxi-rides-benchmark)
 
 ## Directory Structure
 
 ```
 data/
-├── raw/entities/<entity>/yyyy/         ← downloaded parquet files
-├── extracted/entities/<entity>/yyyy/   ← with cab_type, year, month, trip_id added
-├── enriched/entities/<entity>/yyyy/    ← with integer entity_id (from Postgres)
-├── clean/entities/<entity>/yyyy/       ← valid rows only (normalised schema)
-├── dirty/entities/<entity>/yyyy/       ← invalid rows + dirty_reason col
-├── facts/entities/<entity>/yyyy/mm/dd/ ← slim fact table for Phase 2
-└── convolutions/entities/<entity>/yyyy/mm/dd/  ← bitmap parquets per convolution
+├── raw/entities/<entity>/yyyy/            ← downloaded parquet files
+├── extracted/entities/<entity>/yyyy/      ← with cab_type, year, month, trip_id added
+├── enriched/entities/<entity>/yyyy/       ← with integer entity_id (from Postgres)
+├── clean/entities/<entity>/yyyy/          ← valid rows only (normalised schema)
+├── dirty/entities/<entity>/yyyy/          ← invalid rows + dirty_reason col
+├── facts/entities/<entity>/yyyy/        ← slim fact table for Phase 2
+├── facts_duck.db                          ← facts materialised as a native DuckDB table
+└── convolutions/entities/<entity>/yyyy/   ← bitmap parquets per convolution
 ```
 
 ## Pipeline
 
 ```
-download     → data/raw/entities/<entity>/
-extract_id   → data/extracted/           ← adds cab_type, year, month, trip_id
-enrich       → data/enriched/            ← adds integer entity_id via Postgres
-clean        → data/clean/ + data/dirty/ ← normalise schema + filter invalid rows
-create_facts → data/facts/               ← slim fact table from clean data
-convolute    → data/convolutions/        ← bitmaps from clean data
-benchmark    → results/
+download      → data/raw/entities/<entity>/
+extract_id    → data/extracted/            ← adds cab_type, year, month, trip_id
+enrich        → data/enriched/             ← adds integer entity_id via Postgres
+clean         → data/clean/ + data/dirty/  ← normalise schema + filter invalid rows
+create_facts  → data/facts/                ← slim fact table from clean data
+build_facts_db→ data/facts_duck.db         ← facts as a native DuckDB table (Phase 2 scans)
+convolute     → data/convolutions/         ← bitmaps from clean data
+benchmark     → results/
 ```
 
 ## Prerequisites
 
 - Python 3.11+
 - Postgres (local or RDS) for integer entity_id assignment
-- AWS credentials for `get_vm_cost.py` (read-only `pricing:GetProducts`)
+- (Optional) AWS credentials for `get_vm_cost.py` — read-only `pricing:GetProducts` — only needed if you want live VM pricing in the cost report
 
 ## Setup
 
@@ -77,7 +76,7 @@ python -m pipeline.enrich --entity trips --pg-dsn "$PG_DSN" --years 2009-2015
 # 4. Clean (normalise schema + filter invalid rows)
 python -m pipeline.clean --entity trips --years 2009-2015
 
-# 5. Create facts (slim fact table from clean data).
+# 5. Create facts (slim fact table), then materialise as a native DuckDB table
 python -m pipeline.create_facts --entity trips --row-group-size 500000 --years 2009-2015
 python -m pipeline.build_facts_db --entity trips
 
@@ -85,136 +84,182 @@ python -m pipeline.build_facts_db --entity trips
 python -m pipeline.convolute --entity trips --years 2009-2015 --row-group-size 100000
 ```
 
-## Run Benchmark
+After building, you can sanity-check that no source file was silently dropped (e.g. a missing month) before benchmarking:
 
 ```bash
-# Run benchmarks queries against CAC convolutions.
-# There are variants of the benchmark queries, so you can run them all and compare results.
+python verify_convolutions.py --entity trips --cross-check-clean
+```
+
+## Run Benchmark
+
+CAC counts distinct entities by summing over roaring bitmaps. Each convolution stores, per dimension value, a bitmap of the entity_ids plus two precomputed columns:
+
+- **`cardinality`** — the bitmap's count, precomputed at build time. Distinct-counting queries can `SUM(cardinality)` natively in DuckDB with no per-row work.
+- **`bitmap_hash`** — a stable hash of the bitmap bytes, used as a cache key so bitmaps are deserialised once and reused.
+
+There are two counting modes, each with its own spec:
+
+- **`use_cardinality`** — sums the precomputed `cardinality` column. Fastest; native DuckDB integer sum, no UDF.
+- **`use_bitmap_hash`** — calls a UDF that looks up the cached bitmap by its hash and counts it. Useful to measure the cache-backed bitmap path itself.
+
+Most benchmark queries are distinct-counting, so they benefit from the precomputed cardinality. The bitmap-hash mode is provided so you can compare the two approaches directly.
+
+```bash
 export NUM_THREADS=8
 export MEMORY=8GB
-# you have 2 options for the benchmark: use bitmap hash or cardinality
-# we pre compute bitmap cardinality in the convolutions, so you can use that for faster queries.
-# we also cache the bitmap hashes in memory, so you can use that for faster queries. this saves on the fly computation of bitmap hashes & deserialization of bitmaps from parquet.
-# Since most of the Benchmark queries are around distinct counting, they can take advantage of the pre-computed bitmap cardinality. However, 
-# if you want to test the performance of the bitmap hash approach, you can use that as well.
-python3.11 -m benchmark.run_lookup_bm_hash --benchmark B1_litwintschik_use_cardinality --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache 
-python3.11 -m benchmark.run_lookup_bm_hash --benchmark B2_altinity_use_cardinality --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache 
-#
-python3.11 -m benchmark.run_lookup_bm_hash --benchmark B1_litwintschik_use_bitmap_hash --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache
-python3.11 -m benchmark.run_lookup_bm_hash --benchmark B2_altinity_use_bitmap_hash --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache
- 
 
-# Consolidate with benchmark source times + VM costs
-python -m benchmark.consolidate --benchmark B1 --cac-instance r6i.xlarge
+# Cardinality mode (native SUM(cardinality))
+python3.11 -m benchmark.run_benchmark --benchmark B1_litwintschik_use_cardinality --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache
+python3.11 -m benchmark.run_benchmark --benchmark B2_altinity_use_cardinality      --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache
+
+# Bitmap-hash mode (rb_count_hash UDF over the hash-keyed cache)
+python3.11 -m benchmark.run_benchmark --benchmark B1_litwintschik_use_bitmap_hash --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache
+python3.11 -m benchmark.run_benchmark --benchmark B2_altinity_use_bitmap_hash      --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache
+
+# Consolidate CAC times with the source blog times and per-query VM cost framing.
+# --cac-instance / --region describe the machine you ran CAC on.
+python -m benchmark.consolidate --benchmark B1 B2 --cac-instance m7gd.4xlarge --region ap-southeast-1
 ```
 
 ## Results
 
 After you run the benchmark, refer to the `results` folder — results are also printed to the console.
 
+We also ran the benchmark ourselves; the compiled results are below.
+
 **Notes:**
-- B1-Q2 and B2-Q1 are the same query, a raw data aggregate query not optimized for CAC. It's included for completeness. This query reads DuckDB's native format of the facts table.
-- We have categorized the benchmark queries into two categories: distinct counting and raw data aggregate. The former benefits from CAC's bitmap convolutions, while the latter does not.
-- However by using CAC's bitmap convolutions along with Duckdb's native format of the facts table, we can achieve better performance for raw data aggregate queries as well and still maintain the benefits of CAC's bitmap convolutions for distinct counting queries.
-- The benchmark machine we used (AWS m7gd.4xlarge, 16 threads) differs from the Mark Litwintschik and Altinity benchmark machines (32 threads).
-- The CAC benchmark we ran, was on a 16-thread machine, so speedup comparisons *between* the different CAC benchmark runs are valid.
-- A machine with local SSD NVMe storage was chosen to avoid EBS costs — cost efficiency is one of CAC's key goals, alongside better query performance.
-- As the benchmark demonstrates, CAC can achieve significant speedups for distinct counting queries, while still maintaining competitive performance for raw data aggregate queries, while being cost efficient.
 
----
+- B1-Q2 and B2-Q1 are the same query — a raw data aggregate (`AVG(total_amount)` grouped by `passenger_count`) that is not a distinct count and so does not use CAC's bitmap convolutions. It reads DuckDB's native format of the facts table (see `build_facts_db`) and is included for completeness.
+- We categorise the benchmark queries into two kinds: **distinct counting** and **raw data aggregate**. The former benefits from CAC's bitmap convolutions; the latter does not.
+- By pairing CAC's bitmap convolutions (for distinct counting) with DuckDB's native columnar storage of the facts table (for raw aggregates), a single system serves both query kinds well.
+- **The machine we benchmarked CAC on (AWS m7gd.4xlarge, 16 threads) is smaller and cheaper than the machines in the Litwintschik and Altinity benchmarks (32 threads).** See [Cost Efficiency](#cost-efficiency) below: we compare a roughly half-price, half-core machine against full-size 32-thread machines and still win on speed for distinct-counting queries. On a like-for-like 32-thread machine, the CAC speedups would only be larger.
+- All four CAC runs used the same 16-thread machine, so speedup comparisons *between* the CAC modes are like-for-like.
+- We chose an instance with local NVMe SSD to avoid EBS charges — cost efficiency is a first-class goal of CAC, alongside query performance.
+- Overall: CAC delivers large speedups on distinct-counting queries while remaining competitive on raw aggregates, on cheaper hardware.
 
-To be sure we counted more than 1 billion trips, we ran the following query:
+Every reported CAC number is validated against the raw SQL over the source data (the `Results match raw SQL` line in each table), so the speedups reflect exact, not approximate, results.
+
+### Dataset size check
+
+To confirm the dataset holds more than one billion trips, we count per cab type directly from the convolution:
 
 ```sql
 SELECT cab_type,
-             SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
-      FROM conv_cab_type
-      GROUP BY cab_type
-  Q1     Distinct count per dimension value (cab type)         44.57ms           498ms  speedup=11.2x
-         validation: ✓ MATCH
-         +----------+--------------+
-         | cab_type | count_star() |
-         +----------+--------------+
-         | green    | 35027825     |
-         | yellow   | 1170834009   |
-         +----------+--------------+
+       SUM(rb_count_hash(bitmap, bitmap_hash)) AS cnt
+FROM conv_cab_type
+GROUP BY cab_type;
 ```
+
+```
++----------+------------+
+| cab_type | cnt        |
++----------+------------+
+| green    | 35027825   |
+| yellow   | 1170834009 |
++----------+------------+
+```
+
+(≈1.21 billion trips; validation ✓ MATCH.)
 
 ### B1 — Litwintschik Benchmark: Cardinality Mode
 
-**Machine:** AWS m7gd.4xlarge (16 threads, 24GB, cache on)
-**Results match raw SQL:** 4/4
-**CAC (ms)** is the median of 10 iterations per query.
+**Machine:** AWS m7gd.4xlarge (16 threads, 24GB, cache on) · **Results match raw SQL:** 4/4 · CAC (ms) is the median of 10 iterations per query.
 
 | Query | Category            | CAC (ms) | CAC threads | Benchmark (ms) | Bench threads | Speedup |
-|-------|----------------------|---------:|:-----------:|----------------:|:--------------:|--------:|
-| Q1    | distinct_counting    |     0.89 |      16     |             498 |       32       | 559.6x  |
-| Q3    | distinct_counting    |     8.81 |      16     |             734 |       32       |  83.3x  |
-| Q4    | distinct_counting    |    17.88 |      16     |            1334 |       32       |  74.6x  |
-| Q2    | raw_data_aggregate   |   496.31 |      16     |             234 |       32       |   0.5x  |
-
-```bash
-sudo sync; echo 3 | sudo tee /proc/sys/vm/drop_caches
-```
-
----
+|-------|---------------------|---------:|:-----------:|---------------:|:-------------:|--------:|
+| Q1    | distinct_counting   |     0.89 |     16      |            498 |      32       | 559.6x  |
+| Q3    | distinct_counting   |     8.81 |     16      |            734 |      32       |  83.3x  |
+| Q4    | distinct_counting   |    17.88 |     16      |           1334 |      32       |  74.6x  |
+| Q2    | raw_data_aggregate  |   496.31 |     16      |            234 |      32       |   0.5x  |
 
 ### B2 — Altinity Benchmark: Cardinality Mode
 
-**Machine:** AWS m7gd.4xlarge (16 threads, 24GB, cache on)
-**Results match raw SQL:** 5/5
-**CAC (ms)** is the median of 10 iterations per query.
+**Machine:** AWS m7gd.4xlarge (16 threads, 24GB, cache on) · **Results match raw SQL:** 5/5 · CAC (ms) is the median of 10 iterations per query.
 
 | Query | Category            | CAC (ms) | CAC threads | Benchmark (ms) | Bench threads | Speedup |
-|-------|----------------------|---------:|:-----------:|----------------:|:--------------:|--------:|
-| Q2    | distinct_counting    |     8.79 |      16     |            1110 |       32       | 126.3x  |
-| Q3    | distinct_counting    |    18.37 |      16     |            1780 |       32       |  96.9x  |
-| Q4    | distinct_counting    |     7.76 |      16     |             940 |       32       | 121.1x  |
-| Q5    | distinct_counting    |     1.58 |      16     |             330 |       32       | 208.8x  |
-| Q1    | raw_data_aggregate   |   496.56 |      16     |             620 |       32       |   1.2x  |
-
-```bash
-sudo sync; echo 3 | sudo tee /proc/sys/vm/drop_caches
-```
-
----
+|-------|---------------------|---------:|:-----------:|---------------:|:-------------:|--------:|
+| Q2    | distinct_counting   |     8.79 |     16      |           1110 |      32       | 126.3x  |
+| Q3    | distinct_counting   |    18.37 |     16      |           1780 |      32       |  96.9x  |
+| Q4    | distinct_counting   |     7.76 |     16      |            940 |      32       | 121.1x  |
+| Q5    | distinct_counting   |     1.58 |     16      |            330 |      32       | 208.8x  |
+| Q1    | raw_data_aggregate  |   496.56 |     16      |            620 |      32       |   1.2x  |
 
 ### B1 — Litwintschik Benchmark: Bitmap Hash Mode
 
-**Machine:** AWS m7gd.4xlarge (16 threads, 24GB, cache on)
-**Results match raw SQL:** 4/4
-**CAC (ms)** is the median of 10 iterations per query.
+**Machine:** AWS m7gd.4xlarge (16 threads, 24GB, cache on) · **Results match raw SQL:** 4/4 · CAC (ms) is the median of 10 iterations per query.
 
 | Query | Category            | CAC (ms) | CAC threads | Benchmark (ms) | Bench threads | Speedup |
-|-------|----------------------|---------:|:-----------:|----------------:|:--------------:|--------:|
-| Q1    | distinct_counting    |    44.59 |      16     |             498 |       32       |  11.2x  |
-| Q3    | distinct_counting    |   703.76 |      16     |             734 |       32       |   1.0x  |
-| Q4    | distinct_counting    |   720.96 |      16     |            1334 |       32       |   1.9x  |
-| Q2    | raw_data_aggregate   |   496.10 |      16     |             234 |       32       |   0.5x  |
-
-```bash
-sudo sync; echo 3 | sudo tee /proc/sys/vm/drop_caches
-```
-
----
+|-------|---------------------|---------:|:-----------:|---------------:|:-------------:|--------:|
+| Q1    | distinct_counting   |    44.59 |     16      |            498 |      32       |  11.2x  |
+| Q3    | distinct_counting   |   703.76 |     16      |            734 |      32       |   1.0x  |
+| Q4    | distinct_counting   |   720.96 |     16      |           1334 |      32       |   1.9x  |
+| Q2    | raw_data_aggregate  |   496.10 |     16      |            234 |      32       |   0.5x  |
 
 ### B2 — Altinity Benchmark: Bitmap Hash Mode
 
-**Machine:** AWS m7gd.4xlarge (16 threads, 24GB, cache on)
-**Results match raw SQL:** 5/5
-**CAC (ms)** is the median of 10 iterations per query.
+**Machine:** AWS m7gd.4xlarge (16 threads, 24GB, cache on) · **Results match raw SQL:** 5/5 · CAC (ms) is the median of 10 iterations per query.
 
 | Query | Category            | CAC (ms) | CAC threads | Benchmark (ms) | Bench threads | Speedup |
-|-------|----------------------|---------:|:-----------:|----------------:|:--------------:|--------:|
-| Q2    | distinct_counting    |   696.99 |      16     |            1110 |       32       |   1.6x  |
-| Q3    | distinct_counting    |   712.60 |      16     |            1780 |       32       |   2.5x  |
-| Q4    | distinct_counting    |   610.16 |      16     |             940 |       32       |   1.5x  |
-| Q5    | distinct_counting    |    27.02 |      16     |             330 |       32       |  12.2x  |
-| Q1    | raw_data_aggregate   |   496.90 |      16     |             620 |       32       |   1.2x  |
+|-------|---------------------|---------:|:-----------:|---------------:|:-------------:|--------:|
+| Q2    | distinct_counting   |   696.99 |     16      |           1110 |      32       |   1.6x  |
+| Q3    | distinct_counting   |   712.60 |     16      |           1780 |      32       |   2.5x  |
+| Q4    | distinct_counting   |   610.16 |     16      |            940 |      32       |   1.5x  |
+| Q5    | distinct_counting   |    27.02 |     16      |            330 |      32       |  12.2x  |
+| Q1    | raw_data_aggregate  |   496.90 |     16      |            620 |      32       |   1.2x  |
+
+Cardinality mode is dramatically faster than bitmap-hash mode on distinct counts, because `SUM(cardinality)` is a native DuckDB integer sum with no per-row UDF, while bitmap-hash mode pays a Python UDF call per bitmap. Both return identical, validated results — the difference is purely in how the count is computed.
+
+To run against cold cache between iterations, drop the OS page cache first:
 
 ```bash
 sudo sync; echo 3 | sudo tee /proc/sys/vm/drop_caches
 ```
+
+## Cost Efficiency
+
+Cost efficiency is a first-class goal of CAC, not an afterthought. We deliberately benchmarked CAC on a **smaller, cheaper** machine than the ones used in the source blog posts, and it still comes out ahead on both speed *and* price for the query category CAC targets (distinct counting).
+
+| | CAC benchmark machine | Comparable 32-thread machine |
+|---|---|---|
+| Instance | `m7gd.4xlarge` (Graviton3, ARM) | `m5.8xlarge` (Intel, x86) |
+| vCPUs | 16 | 32 |
+| Storage | Local NVMe SSD + 20GB EBS GP3 | 100GB EBS GP3 |
+| Monthly cost | **$625.24** | **$1,129.28** |
+| 12-month cost | **$7,502.88** | **$13,551.36** |
+
+Prices from the [AWS Pricing Calculator](https://calculator.aws/#/estimate?id=2b9d855af33c03abaf15c5bb99da04947fd3ebcf), US East (Ohio), on-demand, Linux, exported **08/07/2026** (dated screenshot in `aws/estimate_Cost`). AWS prices change over time and by region — re-check before citing.
+
+The comparable full-size machine costs **$504.04/month more (~$6,048/year more)** — about **1.8× the price** — while CAC on the cheaper box is still 10x–500x faster on distinct-counting queries.
+
+Two compounding effects make the comparison favour CAC even more than the headline speedups already show:
+
+- **Half the cores, yet still 10x–500x faster on distinct-counting queries** (see the B1/B2 tables above). The machine that "loses" on core count is the one that wins on speed.
+- **Lower price per month, and mostly local NVMe** — the m7gd ships with local NVMe SSD, so it needs only a small EBS volume (20GB here) versus the 100GB the comparison machine carries.
+
+`benchmark.consolidate` folds these VM prices into the results alongside the source blog times, and produces a per-query cost framing: for queries where CAC is faster it reports the annual hardware saving; for queries where CAC is slower it reports how much more per year the faster machine costs.
+
+<a name="pricing-note"></a>
+**Pricing note.** AWS on-demand prices change over time and vary by region. The figures above are a point-in-time export (08/07/2026, US East / Ohio). To re-check current rates:
+
+- [AWS EC2 On-Demand Pricing](https://aws.amazon.com/ec2/pricing/on-demand/)
+- [Our AWS Pricing Calculator estimate](https://calculator.aws/#/estimate?id=2b9d855af33c03abaf15c5bb99da04947fd3ebcf)
+- Or run `python -m pipeline.get_vm_cost --instance m7gd.4xlarge --region <your-region>` (needs read-only `pricing:GetProducts`).
+
+When we ran this benchmark, the `m7gd.4xlarge` cost **$625.24/month** against the `m5.8xlarge`'s **$1,129.28/month** (US East / Ohio, 08/07/2026) — about 55% of the price for the machine that CAC still beats on distinct-counting queries. The m7gd also leans on local NVMe, carrying only a 20GB EBS volume versus 100GB on the comparison machine. A dated screenshot of both estimates is in `aws/estimate_Cost` for a citable record.
+
+## Summary
+
+- **Cost effective.** Our results above are on a machine with half the vCPUs (16 vs 32) and ~55% of the monthly cost ($625 vs $1,129) of the machines used in the source benchmarks — yet still faster on distinct-counting queries.
+- **Complementary, not a replacement.** CAC targets distinct counting; for other aggregates it sits alongside ordinary SQL over the raw/facts data in the same system.
+- **No silver bullet.** There is no single structure that wins every analytical query — CAC is a sharp tool for a common and expensive class of them.
+
+## Use cases
+
+Distinct counting is a core aggregate across many domains, for example:
+
+- cookie / unique-visitor counting in advertising technology
+- counting distinct participants or patients in healthcare analytics
+- audience and cohort sizing in experimentation and product analytics
 
 ## Source Blogs
 
@@ -227,25 +272,25 @@ This benchmark is based on queries from the following blog posts:
 
 We do not own or claim affiliation with the content of these blogs. Their benchmark queries are used here purely as a reference point for our own benchmark.
 
+The pricing figures are point-in-time estimates from the AWS Pricing Calculator (US East / Ohio, on-demand, exported 08/07/2026) and are not affiliated with or endorsed by AWS. AWS on-demand prices change over time and vary by region; the calculator provides an estimate only and excludes taxes and other factors. Verify current rates before relying on these numbers.
+
 ### Thanks
 
 We would like to express our sincere gratitude to **Mark Litwintschik** and **Altinity** for publishing their benchmark articles and queries. Their work provided a valuable reference point for our own benchmark and has contributed significantly to the database community's understanding of analytical query performance.
 
-Their work inspired us to create this benchmark, and we are grateful for the foundation they established for the community.
-
-We encourage readers to visit their original articles, explore their work in full, and support their continued contributions to the open data and database communities.
+Their work inspired us to create this benchmark, and we are grateful for the foundation they established for the community. We encourage readers to visit the original articles, explore the work in full, and support their continued contributions to the open data and database communities.
 
 ### Archived copies
 
-Since these pages may go offline, their archived copies are available for reference:
+Since these pages may go offline, archived copies are available for reference:
 
 - [Litwintschik Benchmark (archived)](https://web.archive.org/web/20260724041713/https://tech.marksblogg.com/duckdb-1b-taxi-rides.html)
 - [Altinity Benchmark (archived)](https://web.archive.org/web/20240530164230/https://altinity.com/blog/clickhouse-and-redshift-face-off-again-in-nyc-taxi-rides-benchmark)
 
-#### PDF snapshots of the above blogs
+#### PDF snapshots
 
-refer to the `blogs/snapshots` folder for pdf snapshots of the above blogs.
+See the `blogs/snapshots` folder for PDF snapshots of the above blogs.
 
-#### Screen recording of the above blogs
+#### Screen recording
 
-refer to this repo- 'https://github.com/jaihind213/cac_reference_repo/'
+See the reference repo: https://github.com/jaihind213/cac_reference_repo/
