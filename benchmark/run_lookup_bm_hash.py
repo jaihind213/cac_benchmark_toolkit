@@ -19,7 +19,7 @@ Query selection:
   --queries Q1 Q3  run only these query IDs (overrides the spec 'enabled' flag).
   (default)        run every query with 'enabled: true' in the spec.
 
-Bitmap UDFs registered into DuckDB: rb_and, rb_or, rb_count, rb_to_array,
+Bitmap UDFs registered into DuckDB: rb_and, rb_or, rb_and_precomputed, rb_or_precomputed, rb_count, rb_to_array,
 rb_chunk, rb_contains, rb_union_list. rb_count is served from a precomputed
 count cache when --try-to-cache is set.
 
@@ -205,6 +205,10 @@ def rb_and_precomputed(a, ha, b, hb):
     """Intersect two bitmaps using precomputed hashes for cache lookup."""
     return bytes((_get_bitmap_h(a, ha) & _get_bitmap_h(b, hb)).serialize())
 
+def rb_or_precomputed(a, ha, b, hb):
+    """Union two bitmaps using precomputed hashes for cache lookup."""
+    return bytes((_get_bitmap_h(a, ha) | _get_bitmap_h(b, hb)).serialize())
+
 
 # ── Pre-computed count cache ──────────────────────────────────────────────────
 # Maps hash(bitmap_bytes) → count. Populated at load time.
@@ -268,6 +272,8 @@ def get_connection(threads: int = 4, temp_dir: str = "/tmp/duckdb_spill") -> duc
                           ["BLOB", "BIGINT", "BIGINT"],                   "BIGINT"),
         ("rb_count_hash",  rb_count_hash, ["BLOB", "BIGINT"],             "BIGINT"),
         ("rb_and_precomputed",   rb_and_precomputed,
+                          ["BLOB", "BIGINT", "BLOB", "BIGINT"],           "BLOB"),
+        ("rb_or_precomputed",    rb_or_precomputed,
                           ["BLOB", "BIGINT", "BLOB", "BIGINT"],           "BLOB"),
     ]:
         con.create_function(fn, func, args, ret, null_handling="special")
@@ -640,7 +646,7 @@ def run_query(con: duckdb.DuckDBPyConnection, sql: str, iterations: int = 5) -> 
 def run_benchmark(benchmark_id: str, entity: str, data_dir: str = "./data",
                   iterations: int = 5, threads: int = 4, memory_limit: str = "4GB",
                   temp_dir: str = "/tmp/duckdb_spill", try_to_cache: bool = False,
-                  only_queries: list = None):
+                  only_queries: list = None, load_all_convolutions: bool = False):
     candidates = [
         p for p in Path("config/benchmarks").glob("*.yaml")
         if p.stem == benchmark_id
@@ -678,7 +684,11 @@ def run_benchmark(benchmark_id: str, entity: str, data_dir: str = "./data",
         for m in re.finditer(r'FROM\s+(conv_\w+|facts)', cac_sql, re.IGNORECASE):
             needed_tables.add(m.group(1))
 
-    print(f"Loading convolutions needed by enabled queries: {sorted(needed_tables)}")
+    needed_tables = None if load_all_convolutions else needed_tables
+    if not load_all_convolutions:
+        print(f"Loading convolutions needed by enabled queries: {sorted(needed_tables)}")
+    else:
+        print("Loading all convolutions (load_all_convolutions=True)")
     cached_tables = load_convolutions(con, entity, data_dir,
                                       try_to_cache=try_to_cache,
                                       only_tables=needed_tables)
@@ -843,7 +853,7 @@ def main():
     for bm_id in args.benchmark:
         run_benchmark(bm_id, args.entity, args.data_dir, args.iterations,
                       args.threads, args.memory, args.temp_dir, args.try_to_cache,
-                      only_queries=args.queries)
+                      only_queries=args.queries, load_all_convolutions = True)
 
 
 if __name__ == "__main__":

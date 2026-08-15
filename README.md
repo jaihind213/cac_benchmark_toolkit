@@ -52,6 +52,7 @@ pip install -e .
 # or
 cd <project_dir>
 micromamba create -n cac_benchmark_toolkit python=3.11 -y
+micromamba activate cac_benchmark_toolkit
 micromamba install poetry
 poetry lock
 poetry install --no-root
@@ -105,21 +106,18 @@ There are two counting modes, each with its own spec:
 Most benchmark queries are distinct-counting, so they benefit from the precomputed cardinality. The bitmap-hash mode is provided so you can compare the two approaches directly.
 
 ```bash
-export NUM_THREADS=8
-export MEMORY=8GB
+export NUM_THREADS=16
+export MEMORY=24GB
 
 # Cardinality mode (native SUM(cardinality))
 python3.11 -m benchmark.run_lookup_bm_hash --benchmark B1_litwintschik_use_cardinality --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache
+#sudo sync; echo 3 | sudo tee /proc/sys/vm/drop_caches
 python3.11 -m benchmark.run_lookup_bm_hash --benchmark B2_altinity_use_cardinality      --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache
-
+#sudo sync; echo 3 | sudo tee /proc/sys/vm/drop_caches
 # Bitmap-hash mode (rb_count_hash UDF over the hash-keyed cache)
 python3.11 -m benchmark.run_lookup_bm_hash --benchmark B1_litwintschik_use_bitmap_hash --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache
+#sudo sync; echo 3 | sudo tee /proc/sys/vm/drop_caches
 python3.11 -m benchmark.run_lookup_bm_hash --benchmark B2_altinity_use_bitmap_hash      --entity trips --memory $MEMORY --duckdb-threads $NUM_THREADS --iterations 10 --try-to-cache
-
-# Consolidate CAC times with the source blog times and per-query VM cost framing.
-# --cac-instance / --region describe the machine you ran CAC on.
-#todo
-python -m benchmark.consolidate --benchmark B1 B2 --cac-instance m7gd.4xlarge --region ap-southeast-1
 ```
 
 ## Results
@@ -142,6 +140,20 @@ Every reported CAC number is validated against the raw SQL over the source data 
 
 ### Dataset size check
 
+```bash
+(cac_benchmark_toolkit) [ec2-user@ip-172-31-40-41 cac_benchmark_toolkit]$ export NUM_THREADS=16
+export MEMORY=24GB
+date; du -sh ./data/*;
+Sat Aug 15 03:33:30 UTC 2026
+23G	./data/clean
+7.8G	./data/convolutions
+27M	./data/dirty
+21G	./data/enriched
+20G	./data/extracted
+16G	./data/facts
+17G	./data/facts_duck.db
+22G	./data/raw
+```
 To confirm the dataset holds more than one billion trips, we count per cab type directly from the convolution:
 
 ```sql
@@ -162,51 +174,67 @@ GROUP BY cab_type;
 
 (≈1.21 billion trips; validation ✓ MATCH.)
 
+```commandline
+setting threads...16
+Loading all convolutions (load_all_convolutions=True)
+  conv_cab_type: TABLE (555.7MB, 3,286 bitmaps cached by hash) +cardinality
+  conv_dropoff_zone: TABLE (1916.3MB, 9,300,063 bitmaps cached by hash) +cardinality
+  conv_hour_pickup: TABLE (705.9MB, 61,341 bitmaps cached by hash) +cardinality
+  conv_pax_distance_date: TABLE (1850.6MB, 595,730 bitmaps cached by hash) +cardinality
+  conv_payment_type: TABLE (688.8MB, 9,699 bitmaps cached by hash) +cardinality
+  conv_pickup_zone: TABLE (2311.2MB, 429,500 bitmaps cached by hash) +cardinality
+  conv_rate_code: TABLE (320.5MB, 15,457 bitmaps cached by hash) +cardinality
+  facts: TABLE via facts_duck.db (17200.9MB, 1,205,861,834 rows, native DuckDB storage)
+  taxi_zones: TABLE (265 zones, in-memory, 265 rows inserted)
+
+Memory: 8349.0MB loaded into RAM, 64824MB available
+Loaded 8 tables/views
+```
 ### B1 — Litwintschik Benchmark: Cardinality Mode
 
 **Machine:** AWS m7gd.4xlarge (16 threads, 24GB, cache on) · **Results match raw SQL:** 4/4 · CAC (ms) is the median of 10 iterations per query.
 
-| Query | Category            | CAC (ms) | CAC threads | Benchmark (ms) | Bench threads | Speedup |
-|-------|---------------------|---------:|:-----------:|---------------:|:-------------:|--------:|
-| Q1    | distinct_counting   |     0.89 |     16      |            498 |      32       | 559.6x  |
-| Q3    | distinct_counting   |     8.81 |     16      |            734 |      32       |  83.3x  |
-| Q4    | distinct_counting   |    17.88 |     16      |           1334 |      32       |  74.6x  |
-| Q2    | raw_data_aggregate  |   496.31 |     16      |            234 |      32       |   0.5x  |
+| Query | Category | CAC (ms) | CAC Threads | Benchmark (ms) | Benchmark Threads | Speedup |
+|:-----:|:-------------------|---------:|------------:|----------------:|------------------:|--------:|
+| Q1 | distinct_counting | 0.84 | 16 | 498 | 32 | **594.5×** |
+| Q3 | distinct_counting | 8.81 | 16 | 734 | 32 | **83.3×** |
+| Q4 | distinct_counting | 18.00 | 16 | 1,334 | 32 | **74.1×** |
+| Q2 | raw_data_aggregate | 497.65 | 16 | 234 | 32 | 0.5× |
 
 ### B2 — Altinity Benchmark: Cardinality Mode
 
 **Machine:** AWS m7gd.4xlarge (16 threads, 24GB, cache on) · **Results match raw SQL:** 5/5 · CAC (ms) is the median of 10 iterations per query.
 
-| Query | Category            | CAC (ms) | CAC threads | Benchmark (ms) | Bench threads | Speedup |
-|-------|---------------------|---------:|:-----------:|---------------:|:-------------:|--------:|
-| Q2    | distinct_counting   |     8.79 |     16      |           1110 |      32       | 126.3x  |
-| Q3    | distinct_counting   |    18.37 |     16      |           1780 |      32       |  96.9x  |
-| Q4    | distinct_counting   |     7.76 |     16      |            940 |      32       | 121.1x  |
-| Q5    | distinct_counting   |     1.58 |     16      |            330 |      32       | 208.8x  |
-| Q1    | raw_data_aggregate  |   496.56 |     16      |            620 |      32       |   1.2x  |
+| Query | Category | CAC (ms) | CAC Threads | Benchmark (ms) | Benchmark Threads | Speedup |
+|:-----:|:-------------------|---------:|------------:|----------------:|------------------:|--------:|
+| Q2 | distinct_counting | 8.80 | 16 | 1,110 | 32 | **126.1×** |
+| Q3 | distinct_counting | 18.23 | 16 | 1,780 | 32 | **97.6×** |
+| Q4 | distinct_counting | 7.99 | 16 | 940 | 32 | **117.7×** |
+| Q5 | distinct_counting | 1.67 | 16 | 330 | 32 | **197.8×** |
+| Q1 | raw_data_aggregate | 497.78 | 16 | 620 | 32 | **1.2×** |
 
 ### B1 — Litwintschik Benchmark: Bitmap Hash Mode
 
 **Machine:** AWS m7gd.4xlarge (16 threads, 24GB, cache on) · **Results match raw SQL:** 4/4 · CAC (ms) is the median of 10 iterations per query.
 
-| Query | Category            | CAC (ms) | CAC threads | Benchmark (ms) | Bench threads | Speedup |
-|-------|---------------------|---------:|:-----------:|---------------:|:-------------:|--------:|
-| Q1    | distinct_counting   |    44.59 |     16      |            498 |      32       |  11.2x  |
-| Q3    | distinct_counting   |   703.76 |     16      |            734 |      32       |   1.0x  |
-| Q4    | distinct_counting   |   720.96 |     16      |           1334 |      32       |   1.9x  |
-| Q2    | raw_data_aggregate  |   496.10 |     16      |            234 |      32       |   0.5x  |
+| Query | Category | CAC (ms) | CAC Threads | Benchmark (ms) | Benchmark Threads | Speedup |
+|:-----:|:-------------------|---------:|------------:|----------------:|------------------:|--------:|
+| Q1 | distinct_counting | 44.94 | 16 | 498 | 32 | **11.1×** |
+| Q3 | distinct_counting | 806.57 | 16 | 734 | 32 | 0.9× |
+| Q4 | distinct_counting | 816.38 | 16 | 1,334 | 32 | **1.6×** |
+| Q2 | raw_data_aggregate | 496.98 | 16 | 234 | 32 | 0.5× |
 
 ### B2 — Altinity Benchmark: Bitmap Hash Mode
 
 **Machine:** AWS m7gd.4xlarge (16 threads, 24GB, cache on) · **Results match raw SQL:** 5/5 · CAC (ms) is the median of 10 iterations per query.
 
-| Query | Category            | CAC (ms) | CAC threads | Benchmark (ms) | Bench threads | Speedup |
-|-------|---------------------|---------:|:-----------:|---------------:|:-------------:|--------:|
-| Q2    | distinct_counting   |   696.99 |     16      |           1110 |      32       |   1.6x  |
-| Q3    | distinct_counting   |   712.60 |     16      |           1780 |      32       |   2.5x  |
-| Q4    | distinct_counting   |   610.16 |     16      |            940 |      32       |   1.5x  |
-| Q5    | distinct_counting   |    27.02 |     16      |            330 |      32       |  12.2x  |
-| Q1    | raw_data_aggregate  |   496.90 |     16      |            620 |      32       |   1.2x  |
+| Query | Category | CAC (ms) | CAC Threads | Benchmark (ms) | Benchmark Threads | Speedup |
+|:-----:|:-------------------|---------:|------------:|----------------:|------------------:|--------:|
+| Q2 | distinct_counting | 821.69 | 16 | 1,110 | 32 | **1.4×** |
+| Q3 | distinct_counting | 843.51 | 16 | 1,780 | 32 | **2.1×** |
+| Q4 | distinct_counting | 651.20 | 16 | 940 | 32 | **1.4×** |
+| Q5 | distinct_counting | 40.65 | 16 | 330 | 32 | **8.1×** |
+| Q1 | raw_data_aggregate | 496.72 | 16 | 620 | 32 | **1.2×** |
 
 Cardinality mode is dramatically faster than bitmap-hash mode on distinct counts, because `SUM(cardinality)` is a native DuckDB integer sum with no per-row UDF, while bitmap-hash mode pays a Python UDF call per bitmap. Both return identical, validated results — the difference is purely in how the count is computed.
 
@@ -215,6 +243,8 @@ To run against cold cache between iterations, drop the OS page cache first:
 ```bash
 sudo sync; echo 3 | sudo tee /proc/sys/vm/drop_caches
 ```
+
+The screen recording of this run is available in the reference repo: https://github.com/jaihind213/cac_reference_repo/
 
 ## Cost Efficiency
 
