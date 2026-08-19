@@ -4,6 +4,7 @@ services:
   postgres:
     image: hbontempo/postgres-hll:15-alpine3.17-latest
     restart: always
+    cpus: 2
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
