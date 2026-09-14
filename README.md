@@ -313,6 +313,7 @@ Two compounding effects make the comparison favour CAC even more than the headli
 
 - [AWS EC2 On-Demand Pricing](https://aws.amazon.com/ec2/pricing/on-demand/)
 - [Our AWS Pricing Calculator estimate](https://calculator.aws/#/estimate?id=2b9d855af33c03abaf15c5bb99da04947fd3ebcf)
+   Note: If the AWS Pricing Calculator estimate does not open, refer to the aws/estimate_Cost folder for the corresponding estimate and reference details.
   
 When we ran this benchmark, the `m7gd.4xlarge` cost **$625.24/month** against the `m5.8xlarge`'s **$1,129.28/month** (US East / Ohio, 08/07/2026) — about 55% of the price for the machine that CAC still beats on distinct-counting queries. The m7gd also leans on local NVMe, carrying only a 20GB EBS volume versus 100GB on the comparison machine. A dated screenshot of both estimates is in `aws/estimate_Cost` for a citable record.
 
