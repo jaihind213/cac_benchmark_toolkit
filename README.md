@@ -308,15 +308,12 @@ Two compounding effects make the comparison favour CAC even more than the headli
 - **Half the cores, yet still 10x–500x faster on distinct-counting queries** (see the B1/B2 tables above). The machine that "loses" on core count is the one that wins on speed.
 - **Lower price per month, and mostly local NVMe** — the m7gd ships with local NVMe SSD, so it needs only a small EBS volume (20GB here) versus the 100GB the comparison machine carries.
 
-`benchmark.consolidate` folds these VM prices into the results alongside the source blog times, and produces a per-query cost framing: for queries where CAC is faster it reports the annual hardware saving; for queries where CAC is slower it reports how much more per year the faster machine costs.
-
 <a name="pricing-note"></a>
 **Pricing note.** AWS on-demand prices change over time and vary by region. The figures above are a point-in-time export (08/07/2026, US East / Ohio). To re-check current rates:
 
 - [AWS EC2 On-Demand Pricing](https://aws.amazon.com/ec2/pricing/on-demand/)
 - [Our AWS Pricing Calculator estimate](https://calculator.aws/#/estimate?id=2b9d855af33c03abaf15c5bb99da04947fd3ebcf)
-- Or run `python -m pipeline.get_vm_cost --instance m7gd.4xlarge --region <your-region>` (needs read-only `pricing:GetProducts`).
-
+  
 When we ran this benchmark, the `m7gd.4xlarge` cost **$625.24/month** against the `m5.8xlarge`'s **$1,129.28/month** (US East / Ohio, 08/07/2026) — about 55% of the price for the machine that CAC still beats on distinct-counting queries. The m7gd also leans on local NVMe, carrying only a 20GB EBS volume versus 100GB on the comparison machine. A dated screenshot of both estimates is in `aws/estimate_Cost` for a citable record.
 
 ## Summary
