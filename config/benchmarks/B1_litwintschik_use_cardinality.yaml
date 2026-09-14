@@ -1,0 +1,127 @@
+benchmark_id: B1_litwintschik_use_cardinality
+name: "Mark Litwintschik — 1.1B NYC Taxi Rides using DuckDB"
+url: "https://tech.marksblogg.com/duckdb-1b-taxi-rides.html"
+published: "March 2024"
+
+dataset:
+  entity: trips
+  rows: 1_100_000_000
+  years: "2009-2015"
+  taxi_types: [yellow, green]
+  date_from: "2009-01-01"
+  date_to:   "2015-12-31"
+
+software:
+  name: DuckDB
+  version: "0.10.0"
+
+hardware:
+  cores_used: 32
+  source_from_blog: "It has 8 performance cores and 16 efficiency cores with a total of 32 threads and 32 MB of L2 cache."
+  actual: "Intel Core i9-14900K @ 6GHz, 48GB DDR5, 4TB NVMe SSD"
+  cloud_equivalent: "m5.8xlarge"
+  region: "us-east-1"
+
+queries:
+  - id: Q0
+    category: distinct_counting
+    enabled: false
+    sql: >
+      SELECT cab_type, COUNT(*) FROM trips GROUP BY cab_type
+    cac_sql: >
+      SELECT cab_type,
+             SUM(cardinality) AS cnt
+      FROM conv_cab_type
+      WHERE pickup_date BETWEEN '2009-01-01' AND '2015-12-31'
+      GROUP BY cab_type
+    nature: "Dataset verification — row count per cab type"
+    cac_phase: "Phase 1"
+    benchmark_time_ms: null
+    expected_results:
+      yellow: 1086709191
+      green:  26943827
+    validation:
+      compare: exact
+
+  - id: Q1
+    category: distinct_counting
+    enabled: true
+    sql: >
+      SELECT cab_type, COUNT(*) FROM trips GROUP BY cab_type
+    cac_sql: >
+      SELECT cab_type,
+             SUM(cardinality) AS cnt
+      FROM conv_cab_type
+      GROUP BY cab_type
+    nature: "Distinct count per dimension value (cab type)"
+    cac_phase: "Phase 1"
+    benchmark_time_ms: 498
+    validation:
+      compare: exact
+
+  - id: Q2
+    category: raw_data_aggregate
+    enabled: true
+    sql: >
+      SELECT passenger_count, AVG(total_amount)
+      FROM trips
+      GROUP BY passenger_count
+    cac_sql: >
+      SELECT passenger_count,
+             AVG(total_amount) AS avg_total_amount
+      FROM facts
+      GROUP BY passenger_count
+    nature: "Grouped aggregate — average fare per passenger count"
+    cac_phase: "Phase 2 (facts direct)"
+    benchmark_time_ms: 234
+    validation:
+      compare: exact
+      note: "Compare AVG(total_amount) per passenger_count"
+
+  - id: Q3
+    category: distinct_counting
+    enabled: true
+    sql: >
+      SELECT passenger_count,
+             DATE_PART('year', pickup_datetime) AS year,
+             COUNT(*)
+      FROM trips
+      GROUP BY passenger_count, DATE_PART('year', pickup_datetime)
+      ORDER BY passenger_count, DATE_PART('year', pickup_datetime)
+    cac_sql: >
+      SELECT passenger_count,
+             LEFT(pickup_date, 4) as year,
+             SUM(cardinality) AS cnt
+      FROM conv_pax_distance_date
+      GROUP BY passenger_count, LEFT(pickup_date, 4) 
+      ORDER BY passenger_count, year
+    nature: "Two-dimensional count — passenger count × year"
+    cac_phase: "Phase 1"
+    benchmark_time_ms: 734
+    validation:
+      compare: exact
+
+  - id: Q4
+    category: distinct_counting
+    enabled: true
+    sql: >
+      SELECT passenger_count,
+             DATE_PART('year', pickup_datetime) AS year,
+             ROUND(trip_distance) AS distance,
+             COUNT(*)
+      FROM trips
+      GROUP BY passenger_count, DATE_PART('year', pickup_datetime), ROUND(trip_distance)
+      ORDER BY year, COUNT(*) DESC
+    cac_sql: >
+      SELECT passenger_count,
+             LEFT(pickup_date, 4) AS year,
+             trip_distance AS distance,
+             SUM(cardinality) AS cnt
+      FROM conv_pax_distance_date
+      GROUP BY passenger_count, LEFT(pickup_date, 4), trip_distance
+      ORDER BY passenger_count, year, trip_distance
+    nature: "Three-dimensional count with ranking — pax × year × distance"
+    cac_phase: "Phase 1"
+    benchmark_time_ms: 1334
+    validation:
+      compare: exact
