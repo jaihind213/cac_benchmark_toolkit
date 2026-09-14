@@ -2,9 +2,13 @@
 
 Reproducible benchmark pipeline for the Convolution Analytics Cube (CAC).
 
-The paper "Convolution Analytics Cube: A New Approach to OLAP" (https://todo) describes the CAC data structure and its performance characteristics. The paper is authored by Mithesh Pathak & Chanderraju Vishnu.
+The paper *“Convolution Analytics Cube: A New Approach to OLAP”*,
+authored by Mithesh Pathak and Chanderraju Sri Vishnu Hanumanth Rao, describes the CAC
+data structure and its performance characteristics.
 
-This repository contains a benchmark pipeline that reproduces the results from the paper, using the NYC taxi dataset as a test case.
+This repository contains the benchmark implementation used in the paper.
+The paper references a specific repository commit corresponding to the
+benchmark results reported in the paper.
 
 We have implemented the benchmark queries from the following blog posts:
 
